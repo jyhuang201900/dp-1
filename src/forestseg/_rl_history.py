@@ -1,18 +1,14 @@
-"""RL-history persistence helpers used by :mod:`forestseg.cli`.
+"""Strict validation + IO for the on-disk ``rl_history.json`` payload.
 
-This module owns:
+This module owns the canonical ``selection_metric`` whitelists and
+the load / validate / append / rewrite helpers consumed by
+:mod:`forestseg.cli`. Lenient pre-processing of older entry shapes
+lives in :mod:`forestseg._rl_history_legacy` and is applied as the
+first step of validation; the two modules together implement the
+"normalize-then-validate" pipeline.
 
-- the legacy fusion-parameter defaults used to fill in missing fields
-  on entries written by older `dp` versions,
-- the canonical ``selection_metric`` whitelist,
-- normalization / validation / load / append / rewrite helpers for the
-  on-disk ``rl_history.json`` payload that the closed-loop driver
-  produces.
-
-The helpers were extracted from :mod:`forestseg.cli` to keep the CLI
-module focused on argparse plumbing and command handlers. The names
-remain re-exported from :mod:`forestseg.cli` for backward compatibility
-with the upstream test suite.
+Names remain re-exported from :mod:`forestseg.cli` for backward
+compatibility with the upstream test suite.
 """
 
 from __future__ import annotations
@@ -23,6 +19,10 @@ from typing import Any
 
 import numpy as np
 
+from ._rl_history_legacy import (
+    LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS as LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS,
+    _normalize_legacy_rl_history_entry as _normalize_legacy_rl_history_entry,
+)
 from ._validators import (
     _validate_choice,
     _validate_non_negative_float,
@@ -43,79 +43,6 @@ __all__ = [
 
 VALID_TRAIN_SELECTION_METRICS = {"accuracy", "precision", "recall", "f1", "iou"}
 VALID_RL_SELECTION_METRICS = {"reward", *VALID_TRAIN_SELECTION_METRICS}
-
-LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS = {
-    "lambda_spec": 0.2,
-    "lambda_tex": 0.2,
-    "threshold": 0.5,
-    "min_area_m2": 200.0,
-    "morph_kernel": 3,
-    "shadow_penalty": 0.5,
-}
-
-
-def _normalize_legacy_rl_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    normalized_entry = dict(entry)
-
-    raw_selection_metric = normalized_entry.get("selection_metric", "reward")
-    if isinstance(raw_selection_metric, str):
-        raw_selection_metric = raw_selection_metric.strip().lower()
-    if raw_selection_metric not in VALID_RL_SELECTION_METRICS:
-        raw_selection_metric = "reward"
-    selection_metric = str(raw_selection_metric)
-
-    validation_metrics = normalized_entry.get("validation_metrics")
-    if isinstance(validation_metrics, dict):
-        normalized_validation_metrics = dict(validation_metrics)
-    else:
-        normalized_validation_metrics = {}
-
-    reward_source = normalized_validation_metrics.get(
-        "reward", normalized_entry.get("reward", normalized_entry.get("score", 0.0))
-    )
-    if isinstance(reward_source, bool):
-        reward_source = 0.0
-    try:
-        reward = float(reward_source)
-    except (TypeError, ValueError):
-        reward = 0.0
-    if not np.isfinite(reward):
-        reward = 0.0
-    reward = max(reward, 0.0)
-    normalized_validation_metrics["reward"] = reward
-
-    selected_metric_source = normalized_validation_metrics.get(selection_metric)
-    downgraded_to_reward = False
-    if selected_metric_source is None and selection_metric != "reward":
-        selection_metric = "reward"
-        downgraded_to_reward = True
-        selected_metric_source = normalized_validation_metrics.get("reward")
-    if selected_metric_source is None:
-        selected_metric_source = reward
-    if isinstance(selected_metric_source, bool):
-        selected_metric_source = reward
-    try:
-        selected_metric_value = float(selected_metric_source)
-    except (TypeError, ValueError):
-        selected_metric_value = reward
-    if not np.isfinite(selected_metric_value):
-        selected_metric_value = reward
-    normalized_validation_metrics[selection_metric] = selected_metric_value
-
-    params = normalized_entry.get("params")
-    if isinstance(params, dict):
-        merged_params = {**LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS, **params}
-    else:
-        merged_params = dict(LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS)
-
-    normalized_entry["selection_metric"] = selection_metric
-    normalized_entry["validation_metrics"] = normalized_validation_metrics
-    normalized_entry["params"] = merged_params
-    if downgraded_to_reward or "score" not in normalized_entry:
-        normalized_entry["score"] = selected_metric_value
-    if "reward" not in normalized_entry:
-        normalized_entry["reward"] = reward
-    return normalized_entry
 
 
 def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None = None) -> dict[str, Any]:
