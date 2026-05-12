@@ -1,0 +1,188 @@
+# 项目根目录（用于拼接其他相对路径）
+project_root: E:/CORONA
+
+# 场景配置脚本路径
+scene_sh: E:/CORONA/input/config/scene.sh
+
+# 中间产物与模型输出目录
+work_dir: E:/CORONA/DeepLearning/work
+
+# 最终导出结果目录
+output_dir: E:/CORONA/input/generated/export
+
+input:
+  # 是否优先走 v1 输入流程
+  prefer_v1: true
+  # v1 不可用时是否回退到 quick 流程
+  fallback_quick: true
+
+preprocess:
+  # 归一化分位数裁剪区间 [低分位, 高分位]
+  clip_percentiles: [2, 98]
+  # 是否执行归一化
+  normalize: true
+
+labels:
+  # 正样本矢量路径
+  positive_path: E:/CORONA/DeepLearning/labels/label_points.gpkg
+  # 负样本矢量路径
+  negative_path: E:/CORONA/DeepLearning/labels/label_points_0.gpkg
+  # 标签图层名
+  layer: labels
+  # 类别字段名
+  class_field: class
+  # 正类标签值
+  positive_value: 1
+  # 负类标签值
+  negative_value: 0
+  # 训练/验证划分比例（训练占比）
+  split_ratio: 0.7
+  # 空间分块尺寸（用于更稳健的空间划分）
+  grid_size: 1000.0
+  # 划分随机种子
+  split_seed: 42
+
+dem:
+  # 可选 DEM 路径；null 表示不使用 DEM
+  path: null
+
+spectral:
+  # 光谱分位阈值参数
+  quantile: 0.35
+  # Otsu 分量权重
+  otsu_weight: 0.4
+  # 分位分量权重
+  quantile_weight: 0.3
+  # 局部分量权重
+  local_weight: 0.3
+  # 局部统计窗口大小（奇数更常见）
+  local_block_size: 51
+
+texture:
+  # 纹理多尺度窗口
+  windows: [7, 15, 31]
+  # LBP 半径
+  lbp_radius: 1
+  # LBP 点数
+  lbp_points: 8
+
+dl:
+  # ===== DeepLearning 训练/推理参数 =====
+
+  # 主干网络
+  encoder_name: resnet34
+
+  # 训练后最优权重路径
+  checkpoint_path: E:/CORONA/DeepLearning/work/checkpoints/best.pt
+
+  # 推理窗口大小（像素）
+  # - 更大：上下文更多，但显存占用更高
+  # - 更小：显存压力低，但窗口数通常更多
+  tile_size: 512
+
+  # 滑窗步长（必须 <= tile_size）
+  # - 越小重叠越大，边缘更平滑，但速度更慢
+  # - 越接近 tile_size，速度越快
+  # 建议：
+  #   极速优先：stride = tile_size
+  #   质量平衡：stride 取 tile_size 的 60%~80%
+  stride: 256
+
+  # 每次前向的窗口数（训练/推理都受影响）
+  # - 越大通常越快，但显存更容易 OOM
+  # 4060 建议从 8~16 之间试探
+  batch_size: 8
+
+  # 训练轮数
+  epochs: 8
+
+  # 优化器学习率
+  learning_rate: 0.0003
+  # 优化器权重衰减
+  weight_decay: 0.0001
+
+  # 每个 epoch 的采样上限（越大训练越久）
+  max_patches: 2000
+
+  # 辅助损失 warmup 轮数；0 表示关闭
+  aux_warmup_epochs: 0
+
+  # 推理时 MC Dropout 次数（直接影响推理时长）
+  # - 1：最快，不确定性估计较弱
+  # - 2：速度约为 1 的一半（当前）
+  # - 4：不确定性更稳，但更慢
+  mc_dropout_passes: 2
+
+  # 训练采样 patch 大小（点样本训练使用）
+  sample_tile_size: 256
+
+  # 验证集二值化阈值
+  val_threshold: 0.5
+
+  # 选择最佳模型的指标（如 f1 / precision / recall）
+  selection_metric: f1
+
+  # 随机种子（用于可复现）
+  seed: 42
+
+  # ===== 可直接切换的推荐档位（仅注释，不自动生效） =====
+  # [A] 极速出图（优先速度）
+  # tile_size: 512
+  # stride: 512
+  # batch_size: 16
+  # mc_dropout_passes: 1
+
+  # [B] 平衡模式（速度/边缘质量折中）
+  # tile_size: 512
+  # stride: 384
+  # batch_size: 12
+  # mc_dropout_passes: 1
+
+fusion:
+  # 融合阶段选择：1=固定/网格融合流程
+  stage: 1
+
+  fixed_params:
+    # 光谱分支权重
+    lambda_spec: 0.2
+    # 纹理分支权重
+    lambda_tex: 0.2
+    # 融合后阈值
+    threshold: 0.5
+    # 最小斑块面积（平方米）
+    min_area_m2: 200
+    # 形态学核大小
+    morph_kernel: 3
+    # 阴影惩罚系数
+    shadow_penalty: 0.5
+
+  grid:
+    # 网格搜索候选：光谱权重
+    lambda_spec: [0.1, 0.2, 0.3]
+    # 网格搜索候选：纹理权重
+    lambda_tex: [0.1, 0.2, 0.3]
+    # 网格搜索候选：阈值
+    threshold: [0.5, 0.55, 0.6]
+    # 网格搜索候选：最小面积
+    min_area_m2: [300, 500, 800]
+    # 网格搜索候选：形态学核
+    morph_kernel: [3, 5]
+    # 网格搜索候选：阴影惩罚
+    shadow_penalty: [0.3, 0.5, 0.7]
+
+rl_loop:
+  # RL 迭代轮数
+  rounds: 2
+  # 提前停止耐心轮数
+  patience: 2
+  # 最小提升阈值（低于该值视为无明显提升）
+  min_delta: 0.001
+  # RL 选择指标（reward / f1 / precision / recall / iou）
+  selection_metric: precision
+
+postprocess:
+  # 开运算核大小
+  opening_kernel: 5
+  # 闭运算核大小
+  closing_kernel: 7
+
