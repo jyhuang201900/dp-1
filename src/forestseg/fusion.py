@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import product
+from typing import Any
 
 import numpy as np
 from skimage.measure import label
 
 from .io_raster import normalized_valid_mask
+
+# Defaults applied by :meth:`FusionParams.from_mapping` when neither
+# the source mapping nor the caller-supplied ``defaults`` mapping
+# provides a value for a key. These reproduce the historical
+# stage-0 / legacy-rl-history defaults so existing payloads remain
+# round-trippable.
+_FUSION_PARAM_DEFAULTS: dict[str, float] = {
+    "lambda_spec": 0.2,
+    "lambda_tex": 0.2,
+    "threshold": 0.5,
+    "min_area_m2": 200.0,
+    "morph_kernel": 3,
+    "shadow_penalty": 0.5,
+}
 
 
 @dataclass
@@ -17,6 +33,41 @@ class FusionParams:
     min_area_m2: float
     morph_kernel: int
     shadow_penalty: float
+
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: Mapping[str, Any] | None,
+        *,
+        defaults: Mapping[str, Any] | None = None,
+    ) -> FusionParams:
+        """Build a :class:`FusionParams` from a dict-like ``mapping``.
+
+        Missing keys fall back first to ``defaults`` (when provided)
+        and then to the module-level :data:`_FUSION_PARAM_DEFAULTS`.
+        Numeric coercion is centralised here so callers don't have to
+        spell out ``float(...) / int(...)`` per field — keeping the
+        construction logic consistent across the CLI, fusion driver
+        and RL policy.
+        """
+        src: Mapping[str, Any] = mapping or {}
+        fallback: Mapping[str, Any] = defaults or {}
+
+        def _pick(key: str) -> Any:
+            if key in src:
+                return src[key]
+            if key in fallback:
+                return fallback[key]
+            return _FUSION_PARAM_DEFAULTS[key]
+
+        return cls(
+            lambda_spec=float(_pick("lambda_spec")),
+            lambda_tex=float(_pick("lambda_tex")),
+            threshold=float(_pick("threshold")),
+            min_area_m2=float(_pick("min_area_m2")),
+            morph_kernel=int(_pick("morph_kernel")),
+            shadow_penalty=float(_pick("shadow_penalty")),
+        )
 
 
 def _weights(lambda_spec: float, lambda_tex: float) -> tuple[float, float, float]:
@@ -92,14 +143,7 @@ def run_stage0(
     shadow_score: np.ndarray,
     fixed_params: dict,
 ) -> tuple[np.ndarray, FusionParams]:
-    p = FusionParams(
-        lambda_spec=float(fixed_params["lambda_spec"]),
-        lambda_tex=float(fixed_params["lambda_tex"]),
-        threshold=float(fixed_params["threshold"]),
-        min_area_m2=float(fixed_params["min_area_m2"]),
-        morph_kernel=int(fixed_params["morph_kernel"]),
-        shadow_penalty=float(fixed_params["shadow_penalty"]),
-    )
+    p = FusionParams.from_mapping(fixed_params)
     fused = fuse_probabilities(prob_dl, prob_spec, prob_tex, p)
     return fused, p
 

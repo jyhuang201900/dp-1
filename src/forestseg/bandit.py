@@ -7,6 +7,8 @@ import random
 from itertools import product
 from typing import Any
 
+from ._io import atomic_write_json
+
 
 def build_bandit_action_space(grid_params: dict[str, list[Any]]) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
@@ -219,5 +221,10 @@ def update_bandit_state(
 
 
 def save_bandit_state(state_path: str, state: dict[str, Any]) -> None:
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    """Atomically write the bandit ``state`` to ``state_path``.
+
+    The bandit state persists across runs and rounds, so a torn write
+    would corrupt the policy for every subsequent round —
+    :func:`forestseg._io.atomic_write_json` rules out that failure mode.
+    """
+    atomic_write_json(state_path, state)

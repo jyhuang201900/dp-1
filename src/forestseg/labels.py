@@ -15,6 +15,8 @@ from rasterio.crs import CRS
 from rasterio.warp import transform_geom
 from shapely.geometry import Point, mapping, shape
 
+from ._io import atomic_write_json
+
 VALID_GEOMETRY_TYPE = "Point"
 MIN_SPLIT_CLASS_WARNING_COUNT = 3
 SEVERE_CLASS_IMBALANCE_RATIO = 4.0
@@ -139,6 +141,7 @@ def _read_label_dataset(options: LabelReadOptions) -> LabelReadResult:
     valid_points: list[LabelPoint] = []
 
     crs_missing_for_target = False
+    src_crs: CRS | None = None
 
     try:
         with fiona.open(options.path, layer=selected_layer) as src:
@@ -192,7 +195,7 @@ def _read_label_dataset(options: LabelReadOptions) -> LabelReadResult:
     return LabelReadResult(
         available_layers=available_layers,
         selected_layer=selected_layer,
-        source_crs=src_crs if "src_crs" in locals() else None,
+        source_crs=src_crs,
         crs_missing_for_target=crs_missing_for_target,
         geometry_counts=geometry_counts,
         raw_label_counts=raw_label_counts,
@@ -669,7 +672,13 @@ def split_points_by_grid(
 
 
 def save_points_json(path: str, points: list[LabelPoint], meta: dict[str, Any] | None = None) -> str:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """Atomically write ``points`` (with ``meta``) to ``path`` as JSON.
+
+    The points artefact (``samples_train.json`` / ``samples_val.json``)
+    is read by every subsequent stage, so a torn write would silently
+    poison training and validation; :func:`forestseg._io.atomic_write_json`
+    guarantees readers see either the previous file or the full new one.
+    """
     payload = {
         "meta": meta or {},
         "points": [
@@ -677,9 +686,7 @@ def save_points_json(path: str, points: list[LabelPoint], meta: dict[str, Any] |
             for pt in points
         ],
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    return path
+    return atomic_write_json(path, payload)
 
 
 def load_points_json(path: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
