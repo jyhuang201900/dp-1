@@ -1,22 +1,67 @@
-"""Validation of the ``labels`` section of the pipeline config.
+"""Validation and shared setup for the ``labels`` config section.
 
-Supports both the modern ``positive_path`` + ``negative_path`` shape
-and the legacy single-``path`` shape. The preflight checks here are
+Supports both the modern ``positive_path`` + ``negative_path`` shape and
+the legacy single-``path`` shape. The preflight checks here are
 intentionally minimal — full content validation (CRS, geometry, label
 domain) lives in :mod:`forestseg.labels`.
+
+In addition to the schema-level helpers (``_resolve_label_paths`` /
+``_resolve_label_mode`` / ``_require_labels_for_preflight``), this
+module owns the typed :class:`LabelSpec` and :class:`LabelGeometry`
+bundles plus :func:`resolve_label_spec`. The matching read / validate
+dispatchers intentionally stay in :mod:`forestseg.cli` so that
+test-time monkeypatching of ``forestseg.cli.validate_label_points`` /
+``forestseg.cli.read_label_points`` (and their dual-file siblings)
+continues to redirect the real call sites — those bindings are looked
+up against the ``forestseg.cli`` module globals at call time.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from ._paths import _require_existing_path
+from ._validators import (
+    _validate_non_negative_int,
+    _validate_positive_float,
+    _validate_ratio,
+)
 
 __all__ = [
+    "LabelGeometry",
+    "LabelSpec",
     "_require_labels_for_preflight",
     "_resolve_label_mode",
     "_resolve_label_paths",
+    "resolve_label_spec",
 ]
+
+
+@dataclass(frozen=True)
+class LabelGeometry:
+    """Raster-derived georeferencing for the snap grid used by label IO."""
+
+    crs: Any
+    origin_x: float
+    origin_y: float
+
+
+@dataclass(frozen=True)
+class LabelSpec:
+    """Validated ``labels`` config bundle shared by prepare / check commands."""
+
+    mode: str
+    positive_path: str | None
+    negative_path: str | None
+    single_path: str | None
+    class_field: str
+    positive_value: str
+    negative_value: str
+    grid_size: float
+    train_ratio: float
+    split_seed: int
+    layer: str | None
 
 
 def _resolve_label_paths(lcfg: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
@@ -64,3 +109,25 @@ def _require_labels_for_preflight(lcfg: dict[str, Any]) -> dict[str, str]:
     return {
         "labels_path": _require_existing_path(str(single_path), "labels.path"),
     }
+
+
+def resolve_label_spec(lcfg: dict[str, Any]) -> LabelSpec:
+    """Validate ``lcfg`` and return a typed :class:`LabelSpec`.
+
+    Raises ``ValueError`` for any out-of-range / wrong-type values, or
+    for partial dual-mode configuration.
+    """
+    positive_path, negative_path, single_path, mode = _resolve_label_mode(lcfg)
+    return LabelSpec(
+        mode=mode,
+        positive_path=positive_path,
+        negative_path=negative_path,
+        single_path=single_path,
+        class_field=str(lcfg.get("class_field", "class")),
+        positive_value=str(lcfg.get("positive_value", "1")),
+        negative_value=str(lcfg.get("negative_value", "0")),
+        grid_size=_validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size"),
+        train_ratio=_validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio"),
+        split_seed=_validate_non_negative_int(lcfg.get("split_seed", 42), "labels.split_seed"),
+        layer=lcfg.get("layer"),
+    )

@@ -35,6 +35,14 @@ from ._artifacts import (
     _round_artifact_paths,
 )
 from ._bandit_config import _resolve_bandit_config as _resolve_bandit_config
+from ._closed_loop import (
+    build_artifact_paths_block as _build_closed_loop_artifacts,
+    build_best_round_restore_plan as _build_best_round_restore_plan,
+    build_round_artifacts_map as _build_round_artifacts_map,
+    build_round_history_entries as _build_round_history_entries,
+    build_summary as _build_closed_loop_summary,
+    reward_and_score as _closed_loop_reward_and_score,
+)
 from ._constants import (
     REQUIRED_FUSION_FIXED_PARAM_KEYS as REQUIRED_FUSION_FIXED_PARAM_KEYS,
     REQUIRED_FUSION_GRID_KEYS as REQUIRED_FUSION_GRID_KEYS,
@@ -50,9 +58,12 @@ from ._fusion_config import (
     _validate_fusion_params as _validate_fusion_params,
 )
 from ._label_resolution import (
+    LabelGeometry,
+    LabelSpec,
     _require_labels_for_preflight,
-    _resolve_label_mode,
+    _resolve_label_mode as _resolve_label_mode,
     _resolve_label_paths as _resolve_label_paths,
+    resolve_label_spec,
 )
 from ._paths import (
     _ensure_directory_writable as _ensure_directory_writable,
@@ -65,7 +76,6 @@ from ._rl_history import (
     LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS as LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS,
     VALID_RL_SELECTION_METRICS,
     VALID_TRAIN_SELECTION_METRICS,
-    _history_entry,
     _load_rl_history,
     _normalize_legacy_rl_history_entry as _normalize_legacy_rl_history_entry,
     _rewrite_latest_rl_history_entry,
@@ -102,6 +112,7 @@ from .io_raster import (
     read_downsampled_band1,
 )
 from .labels import (
+    LabelPoint,
     export_points_preview,
     load_points_json,
     read_label_points,
@@ -431,102 +442,126 @@ def cmd_build_spec_tex(cfg: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _label_geometry_from_raster(prepared: str) -> LabelGeometry:
+    """Read CRS and grid origin from the prepared raster.
+
+    Mirrors what the label commands need from
+    :func:`forestseg.io_raster.read_band1` but packages it as the typed
+    :class:`LabelGeometry` bundle shared by the prepare / check label
+    commands.
+    """
+    raster = read_band1(prepared)
+    crs = raster.profile.get("crs")
+    transform = raster.profile.get("transform")
+    origin_x = float(transform.c) if transform is not None else 0.0
+    origin_y = float(transform.f) if transform is not None else 0.0
+    return LabelGeometry(crs=crs, origin_x=origin_x, origin_y=origin_y)
+
+
+def _validate_label_points_for_spec(spec: LabelSpec, geometry: LabelGeometry) -> dict[str, Any]:
+    """Dispatch to ``validate_label_points*`` based on ``spec.mode``.
+
+    Lives in :mod:`forestseg.cli` (rather than ``_label_resolution``)
+    so the test suite can monkeypatch
+    ``forestseg.cli.validate_label_points`` /
+    ``forestseg.cli.validate_label_points_from_two_files`` and have
+    those overrides apply to the actual call sites at runtime.
+    """
+    if spec.mode == "dual":
+        assert spec.positive_path is not None and spec.negative_path is not None
+        return validate_label_points_from_two_files(
+            positive_path=spec.positive_path,
+            negative_path=spec.negative_path,
+            positive_layer=spec.layer,
+            negative_layer=spec.layer,
+            class_field=spec.class_field,
+            positive_value=spec.positive_value,
+            negative_value=spec.negative_value,
+            target_crs=geometry.crs,
+            grid_size=spec.grid_size,
+            origin_x=geometry.origin_x,
+            origin_y=geometry.origin_y,
+            train_ratio=spec.train_ratio,
+            seed=spec.split_seed,
+        )
+    assert spec.single_path is not None
+    return validate_label_points(
+        path=spec.single_path,
+        layer=spec.layer,
+        class_field=spec.class_field,
+        positive_value=spec.positive_value,
+        negative_value=spec.negative_value,
+        target_crs=geometry.crs,
+        grid_size=spec.grid_size,
+        origin_x=geometry.origin_x,
+        origin_y=geometry.origin_y,
+        train_ratio=spec.train_ratio,
+        seed=spec.split_seed,
+    )
+
+
+def _read_label_points_for_spec(spec: LabelSpec, geometry: LabelGeometry) -> list[LabelPoint]:
+    """Dispatch to ``read_label_points*`` based on ``spec.mode``.
+
+    Lives in :mod:`forestseg.cli` for the same reason as
+    :func:`_validate_label_points_for_spec` — preserving the
+    monkeypatch contract on the ``forestseg.cli`` module surface.
+    """
+    if spec.mode == "dual":
+        assert spec.positive_path is not None and spec.negative_path is not None
+        return read_label_points_from_two_files(
+            positive_path=spec.positive_path,
+            negative_path=spec.negative_path,
+            positive_layer=spec.layer,
+            negative_layer=spec.layer,
+            class_field=spec.class_field,
+            positive_value=spec.positive_value,
+            negative_value=spec.negative_value,
+            target_crs=geometry.crs,
+            grid_size=spec.grid_size,
+            origin_x=geometry.origin_x,
+            origin_y=geometry.origin_y,
+        )
+    assert spec.single_path is not None
+    return read_label_points(
+        path=spec.single_path,
+        layer=spec.layer,
+        class_field=spec.class_field,
+        positive_value=spec.positive_value,
+        negative_value=spec.negative_value,
+        target_crs=geometry.crs,
+        grid_size=spec.grid_size,
+        origin_x=geometry.origin_x,
+        origin_y=geometry.origin_y,
+    )
+
+
 def cmd_prepare_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
     work = ensure_work(cfg)
     prepared = wf(work, "input")
     if not os.path.exists(prepared):
         cmd_prepare_input(cfg)
     lcfg = cfg.get("labels", {})
-    positive_path, negative_path, single_path, label_mode = _resolve_label_mode(lcfg)
-    raster = read_band1(prepared)
-    crs = raster.profile.get("crs")
-    transform = raster.profile.get("transform")
-    origin_x = float(transform.c) if transform is not None else 0.0
-    origin_y = float(transform.f) if transform is not None else 0.0
-    split_seed = _validate_non_negative_int(lcfg.get("split_seed", 42), "labels.split_seed")
-    class_field = str(lcfg.get("class_field", "class"))
-    positive_value = str(lcfg.get("positive_value", "1"))
-    negative_value = str(lcfg.get("negative_value", "0"))
-    grid_size = _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size")
-    train_ratio = _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio")
-    layer = lcfg.get("layer")
-    if label_mode == "dual":
-        assert positive_path is not None and negative_path is not None
-        validation_report = validate_label_points_from_two_files(
-            positive_path=positive_path,
-            negative_path=negative_path,
-            positive_layer=layer,
-            negative_layer=layer,
-            class_field=class_field,
-            positive_value=positive_value,
-            negative_value=negative_value,
-            target_crs=crs,
-            grid_size=grid_size,
-            origin_x=origin_x,
-            origin_y=origin_y,
-            train_ratio=train_ratio,
-            seed=split_seed,
-        )
-    else:
-        assert single_path is not None
-        validation_report = validate_label_points(
-            path=single_path,
-            layer=layer,
-            class_field=class_field,
-            positive_value=positive_value,
-            negative_value=negative_value,
-            target_crs=crs,
-            grid_size=grid_size,
-            origin_x=origin_x,
-            origin_y=origin_y,
-            train_ratio=train_ratio,
-            seed=split_seed,
-        )
+    spec = resolve_label_spec(lcfg)
+    geometry = _label_geometry_from_raster(prepared)
+    validation_report = _validate_label_points_for_spec(spec, geometry)
     validation_risk = dict(validation_report.get("risk") or {})
     if not bool(validation_risk.get("can_run", True)):
         blocking = list(validation_risk.get("blocking") or [])
         raise ValueError("；".join(blocking) if blocking else "标签检查未通过，无法生成训练/验证样本。")
 
-    if label_mode == "dual":
-        assert positive_path is not None and negative_path is not None
-        points = read_label_points_from_two_files(
-            positive_path=positive_path,
-            negative_path=negative_path,
-            positive_layer=layer,
-            negative_layer=layer,
-            class_field=class_field,
-            positive_value=positive_value,
-            negative_value=negative_value,
-            target_crs=crs,
-            grid_size=grid_size,
-            origin_x=origin_x,
-            origin_y=origin_y,
-        )
-    else:
-        assert single_path is not None
-        points = read_label_points(
-            path=single_path,
-            layer=layer,
-            class_field=class_field,
-            positive_value=positive_value,
-            negative_value=negative_value,
-            target_crs=crs,
-            grid_size=grid_size,
-            origin_x=origin_x,
-            origin_y=origin_y,
-        )
-
+    points = _read_label_points_for_spec(spec, geometry)
     train_points, val_points, split_meta = split_points_by_grid(
         points,
-        train_ratio=_validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio"),
-        seed=split_seed,
+        train_ratio=spec.train_ratio,
+        seed=spec.split_seed,
     )
     train_path = save_points_json(wf(work, "samples_train"), train_points, meta=split_meta)
     val_path = save_points_json(wf(work, "samples_val"), val_points, meta=split_meta)
     preview_train = os.path.join(work, "label_train_preview.gpkg")
     preview_val = os.path.join(work, "label_val_preview.gpkg")
-    export_points_preview(preview_train, train_points, crs=crs, layer="train")
-    export_points_preview(preview_val, val_points, crs=crs, layer="val")
+    export_points_preview(preview_train, train_points, crs=geometry.crs, layer="train")
+    export_points_preview(preview_val, val_points, crs=geometry.crs, layer="val")
     return {
         "samples_train": train_path,
         "samples_val": val_path,
@@ -542,51 +577,9 @@ def cmd_check_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
     if not os.path.exists(prepared):
         cmd_prepare_input(cfg)
     lcfg = cfg.get("labels", {})
-    positive_path, negative_path, single_path, label_mode = _resolve_label_mode(lcfg)
-    raster = read_band1(prepared)
-    crs = raster.profile.get("crs")
-    transform = raster.profile.get("transform")
-    origin_x = float(transform.c) if transform is not None else 0.0
-    origin_y = float(transform.f) if transform is not None else 0.0
-    split_seed = _validate_non_negative_int(lcfg.get("split_seed", 42), "labels.split_seed")
-    class_field = str(lcfg.get("class_field", "class"))
-    positive_value = str(lcfg.get("positive_value", "1"))
-    negative_value = str(lcfg.get("negative_value", "0"))
-    grid_size = _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size")
-    train_ratio = _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio")
-    layer = lcfg.get("layer")
-    if label_mode == "dual":
-        assert positive_path is not None and negative_path is not None
-        report = validate_label_points_from_two_files(
-            positive_path=positive_path,
-            negative_path=negative_path,
-            positive_layer=layer,
-            negative_layer=layer,
-            class_field=class_field,
-            positive_value=positive_value,
-            negative_value=negative_value,
-            target_crs=crs,
-            grid_size=grid_size,
-            origin_x=origin_x,
-            origin_y=origin_y,
-            train_ratio=train_ratio,
-            seed=split_seed,
-        )
-    else:
-        assert single_path is not None
-        report = validate_label_points(
-            path=single_path,
-            layer=layer,
-            class_field=class_field,
-            positive_value=positive_value,
-            negative_value=negative_value,
-            target_crs=crs,
-            grid_size=grid_size,
-            origin_x=origin_x,
-            origin_y=origin_y,
-            train_ratio=train_ratio,
-            seed=split_seed,
-        )
+    spec = resolve_label_spec(lcfg)
+    geometry = _label_geometry_from_raster(prepared)
+    report = _validate_label_points_for_spec(spec, geometry)
     risk = dict(report.get("risk") or {})
     report["schema_version"] = 2
     report["status"] = str(risk.get("status", "ok"))
@@ -940,6 +933,12 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
     _log_progress("run-closed-loop: preflight")
     summary_path = wf(work, "closed_loop_summary")
     metrics_history_path = os.path.join(work, "metrics_round_history.json")
+    artifact_paths_view = _build_closed_loop_artifacts(
+        work,
+        metrics_history_path=metrics_history_path,
+        summary_path=summary_path,
+        wf=wf,
+    )
     preflight: dict[str, Any] | None = None
     rounds: int | None = None
     patience: int | None = None
@@ -972,7 +971,9 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
         patience = _validate_positive_int(loop_cfg.get("patience", 2), "rl_loop.patience")
         min_delta = _validate_non_negative_float(loop_cfg.get("min_delta", 0.001), "rl_loop.min_delta")
         selection_metric = _validate_choice(
-            loop_cfg.get("selection_metric", "reward"), "rl_loop.selection_metric", VALID_RL_SELECTION_METRICS
+            loop_cfg.get("selection_metric", "reward"),
+            "rl_loop.selection_metric",
+            VALID_RL_SELECTION_METRICS,
         )
 
         current_stage = "prepare_input"
@@ -1012,8 +1013,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} run-rl-fusion")
             rl_out = cmd_run_rl_fusion(cfg, stage_override=stage_override)
             validation_metrics = rl_out.get("validation_reward") or {}
-            reward = float(validation_metrics["reward"])
-            score = reward if selection_metric == "reward" else float(validation_metrics[selection_metric])
+            reward, score = _closed_loop_reward_and_score(validation_metrics, selection_metric)
             rl_payload_path = os.path.join(work, "fusion_selected.json")
             with open(rl_payload_path, encoding="utf-8") as f:
                 rl_payload = json.load(f)
@@ -1035,18 +1035,8 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
             _snapshot_required_file(wf(work, "prob_dl"), round_paths["prob_dl"], f"round {round_no} prob_dl")
             _copy_file_if_exists(wf(work, "unc_dl"), round_paths["unc_dl"])
             _snapshot_required_file(wf(work, "prob_fused"), round_paths["prob_fused"], f"round {round_no} prob_fused")
-            artifact_paths = {
-                "feature_meta": round_paths["feature_meta"],
-                "train_metrics": round_paths["train_metrics"],
-                "metrics_val": round_paths["metrics_val"],
-                "rl_payload": round_paths["rl_payload"],
-                "fusion_selected": round_paths["fusion_selected"],
-                "feature_feedback": round_paths["feature_feedback"],
-                "prob_dl": round_paths["prob_dl"],
-                "unc_dl": round_paths["unc_dl"],
-                "prob_fused": round_paths["prob_fused"],
-            }
-            loop_entry = _history_entry(
+            artifact_paths = _build_round_artifacts_map(round_paths)
+            loop_entry, metrics_entry = _build_round_history_entries(
                 round_no=round_no,
                 selection_metric=selection_metric,
                 score=score,
@@ -1054,43 +1044,13 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
                 train_metrics=train_metrics,
                 validation_metrics=validation_metrics,
                 artifacts=artifact_paths,
-                extra={
-                    "stage_used": rl_out.get("stage_used"),
-                    "params": rl_out.get("params"),
-                    "checkpoint_path": train_out.get("checkpoint_path"),
-                    "trained": train_out.get("trained"),
-                    "feedback_path": round_paths["feature_feedback"],
-                    "feature_meta": feature_meta,
-                    "train": {
-                        "checkpoint_path": train_out.get("checkpoint_path"),
-                        "trained": train_out.get("trained"),
-                    },
-                    "rl": {
-                        "stage_used": rl_out.get("stage_used"),
-                        "params": rl_out.get("params"),
-                    },
-                },
+                rl_out=rl_out,
+                train_out=train_out,
+                feedback_path=round_paths["feature_feedback"],
+                feature_meta=feature_meta,
             )
             loop_history.append(loop_entry)
-            metrics_round_history.append(
-                _history_entry(
-                    round_no=round_no,
-                    selection_metric=selection_metric,
-                    score=score,
-                    reward=reward,
-                    train_metrics=train_metrics,
-                    validation_metrics=validation_metrics,
-                    artifacts=artifact_paths,
-                    extra={
-                        "stage_used": rl_out.get("stage_used"),
-                        "params": rl_out.get("params"),
-                        "checkpoint_path": train_out.get("checkpoint_path"),
-                        "trained": train_out.get("trained"),
-                        "feedback_path": round_paths["feature_feedback"],
-                        "feature_meta": feature_meta,
-                    },
-                )
-            )
+            metrics_round_history.append(metrics_entry)
 
             if best_score is None or score > best_score + min_delta:
                 best_score = score
@@ -1103,7 +1063,8 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
             else:
                 stagnant_rounds += 1
                 _log_progress(
-                    f"run-closed-loop: round {round_no}/{rounds} no improvement ({selection_metric}={score:.6f}, stagnant={stagnant_rounds}/{patience})"
+                    f"run-closed-loop: round {round_no}/{rounds} no improvement"
+                    f" ({selection_metric}={score:.6f}, stagnant={stagnant_rounds}/{patience})"
                 )
                 if stagnant_rounds >= patience:
                     loop_stopped_early = True
@@ -1112,70 +1073,32 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
 
         if best_entry:
             _log_progress(f"run-closed-loop: restore best round {best_round}")
-            best_artifacts = best_entry.get("artifacts", {})
             current_stage = "restore_best_round"
-            best_fusion_selected = best_artifacts.get("fusion_selected") or best_artifacts.get("rl_payload", "")
-            restore_entries: list[tuple[str, str, str, str]] = [
-                (
-                    best_fusion_selected,
-                    os.path.join(work, "fusion_selected.json"),
-                    "best round fusion_selected",
-                    "json",
-                ),
-                (
-                    best_artifacts.get("feature_feedback", ""),
-                    wf(work, "feature_feedback"),
-                    "best round feature_feedback",
-                    "json",
-                ),
-                (best_artifacts.get("prob_dl", ""), wf(work, "prob_dl"), "best round prob_dl", "file"),
-                (best_artifacts.get("prob_fused", ""), wf(work, "prob_fused"), "best round prob_fused", "file"),
-                (best_artifacts.get("metrics_val", ""), wf(work, "metrics_val"), "best round metrics_val", "json"),
-            ]
-            optional_restore_labels = []
-            best_unc_dl = best_artifacts.get("unc_dl")
-            if best_unc_dl and os.path.exists(best_unc_dl):
-                restore_entries.append((best_unc_dl, wf(work, "unc_dl"), "unc_dl", "file"))
-                optional_restore_labels.append("unc_dl")
-            else:
-                optional_restore_labels = ["unc_dl"]
+            restore_entries, optional_restore_labels = _build_best_round_restore_plan(
+                work,
+                best_entry.get("artifacts", {}),
+                wf=wf,
+            )
             restored_labels = _restore_outputs_atomically(restore_entries)
             failed_restore_labels = []
             restore_outcome = _optional_restore_outcome(optional_restore_labels, restored_labels, failed_restore_labels)
 
-        summary = {
-            "schema_version": 2,
-            "status": "ok",
-            "preflight": preflight,
-            "loop": {
-                "rounds_requested": rounds,
-                "rounds_completed": len(loop_history),
-                "selection_metric": selection_metric,
-                "patience": patience,
-                "min_delta": min_delta,
-                "stopped_early": loop_stopped_early,
-            },
-            "best": {
-                "round": best_round,
-                "score": best_score,
-                "reward": best_entry.get("reward") if best_entry else None,
-                "selection_metric": selection_metric,
-                "entry": best_entry,
-                "restore_outcome": restore_outcome,
-            },
-            "history": loop_history,
-            "artifacts": {
-                "fusion_selected": os.path.join(work, "fusion_selected.json"),
-                "feature_feedback": wf(work, "feature_feedback"),
-                "prob_dl": wf(work, "prob_dl"),
-                "unc_dl": wf(work, "unc_dl"),
-                "prob_fused": wf(work, "prob_fused"),
-                "metrics_val": wf(work, "metrics_val"),
-                "rl_history": wf(work, "rl_history"),
-                "metrics_round_history": metrics_history_path,
-                "closed_loop_summary": summary_path,
-            },
-        }
+        summary = _build_closed_loop_summary(
+            status="ok",
+            preflight=preflight,
+            rounds_requested=rounds,
+            rounds_completed=len(loop_history),
+            patience=patience,
+            min_delta=min_delta,
+            selection_metric=selection_metric,
+            stopped_early=loop_stopped_early,
+            best_round=best_round,
+            best_score=best_score,
+            best_entry=best_entry,
+            restore_outcome=restore_outcome,
+            history=loop_history,
+            artifacts=artifact_paths_view,
+        )
         with open(metrics_history_path, "w", encoding="utf-8") as f:
             json.dump(metrics_round_history, f, ensure_ascii=False, indent=2)
         with open(summary_path, "w", encoding="utf-8") as f:
@@ -1190,45 +1113,28 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
             raised_exc = exc.__cause__ or ValueError(str(exc))
         if best_entry and current_stage == "restore_best_round":
             restore_outcome = _optional_restore_outcome(optional_restore_labels, restored_labels, failed_restore_labels)
-        failure_summary = {
-            "schema_version": 2,
-            "status": "failed",
-            "preflight": preflight,
-            "loop": {
-                "rounds_requested": rounds,
-                "rounds_completed": len(loop_history),
-                "selection_metric": selection_metric,
-                "patience": patience,
-                "min_delta": min_delta,
-                "stopped_early": loop_stopped_early,
-            },
-            "best": {
-                "round": best_round if best_entry else None,
-                "score": best_score if best_entry else None,
-                "reward": best_entry.get("reward") if best_entry else None,
-                "selection_metric": selection_metric,
-                "entry": best_entry,
-                "restore_outcome": restore_outcome,
-            },
-            "history": loop_history,
-            "failure": {
+        failure_summary = _build_closed_loop_summary(
+            status="failed",
+            preflight=preflight,
+            rounds_requested=rounds,
+            rounds_completed=len(loop_history),
+            patience=patience,
+            min_delta=min_delta,
+            selection_metric=selection_metric,
+            stopped_early=loop_stopped_early,
+            best_round=best_round,
+            best_score=best_score,
+            best_entry=best_entry,
+            restore_outcome=restore_outcome,
+            history=loop_history,
+            artifacts=artifact_paths_view,
+            failure={
                 "stage": current_stage,
                 "round": current_round,
                 "error_type": type(raised_exc).__name__,
                 "message": str(raised_exc),
             },
-            "artifacts": {
-                "fusion_selected": os.path.join(work, "fusion_selected.json"),
-                "feature_feedback": wf(work, "feature_feedback"),
-                "prob_dl": wf(work, "prob_dl"),
-                "unc_dl": wf(work, "unc_dl"),
-                "prob_fused": wf(work, "prob_fused"),
-                "metrics_val": wf(work, "metrics_val"),
-                "rl_history": wf(work, "rl_history"),
-                "metrics_round_history": metrics_history_path,
-                "closed_loop_summary": summary_path,
-            },
-        }
+        )
         with open(metrics_history_path, "w", encoding="utf-8") as f:
             json.dump(metrics_round_history, f, ensure_ascii=False, indent=2)
         with open(summary_path, "w", encoding="utf-8") as f:
