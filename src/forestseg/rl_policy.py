@@ -137,7 +137,7 @@ def choose_fusion_by_validation(
             morph_kernel=int(resolved_postprocess["morph_kernel"]),
             shadow_penalty=float(resolved_postprocess["shadow_penalty"]),
         )
-        metrics = {
+        fallback_metrics: dict[str, Any] = {
             "threshold": float(p.threshold),
             "accuracy": 0.0,
             "precision": 0.0,
@@ -149,7 +149,7 @@ def choose_fusion_by_validation(
             "reward": 0.0,
             "valid_points_used": 0,
         }
-        return p, metrics, "validation_fallback_fixed"
+        return p, fallback_metrics, "validation_fallback_fixed"
 
     y_true = y_true[valid]
     dl_vals = dl_vals[valid]
@@ -167,7 +167,7 @@ def choose_fusion_by_validation(
         )
         fused_prob = fuse_probabilities(dl_vals, spec_vals, tex_vals, candidate)
         metrics = binary_metrics(y_true, fused_prob, threshold=float(candidate.threshold))
-        metrics["reward"] = float(metrics["accuracy"] + metrics["f1"] + metrics["iou"])
+        metrics["reward"] = float(metrics["accuracy"]) + float(metrics["f1"]) + float(metrics["iou"])
         metrics["valid_points_used"] = len(y_true)
         return candidate, metrics, "validation_stage0"
 
@@ -189,7 +189,7 @@ def choose_fusion_by_validation(
         )
         fused_prob = fuse_probabilities(dl_vals, spec_vals, tex_vals, candidate)
         metrics = binary_metrics(y_true, fused_prob, threshold=float(candidate.threshold))
-        reward = float(metrics["accuracy"] + metrics["f1"] + metrics["iou"])
+        reward = float(metrics["accuracy"]) + float(metrics["f1"]) + float(metrics["iou"])
         if reward > best_reward:
             best_reward = reward
             best_candidate = candidate

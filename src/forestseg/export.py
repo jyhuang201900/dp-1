@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 import fiona
 import rasterio
@@ -88,7 +89,7 @@ def export_vector_streaming(mask_tif: str, gpkg_path: str) -> str:
 
 def export_selected_params(output_dir: str, cropped_raster: str, params: dict, score: float | None = None) -> str:
     path = os.path.join(output_dir, f"{cropped_raster}_fusion_params.json")
-    payload = {"params": params}
+    payload: dict[str, Any] = {"params": params}
     if score is not None:
         payload["score"] = float(score)
     with open(path, "w", encoding="utf-8") as f:

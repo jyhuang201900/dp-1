@@ -157,7 +157,7 @@ def normalize_clip(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
 
 
 def compute_percentiles_uint8(path: str, pmin: float = 2.0, pmax: float = 98.0) -> tuple[float, float]:
-    hist = np.zeros(256, dtype=np.int64)
+    hist: np.ndarray = np.zeros(256, dtype=np.int64)
     with rasterio.open(path) as ds:
         for _, window in ds.block_windows(1):
             arr = ds.read(1, window=window, masked=True)

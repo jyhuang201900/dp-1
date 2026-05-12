@@ -185,4 +185,3 @@ postprocess:
   opening_kernel: 5
   # 闭运算核大小
   closing_kernel: 7
-

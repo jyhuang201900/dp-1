@@ -10,7 +10,6 @@ import importlib
 
 import pytest
 
-
 # Modules that callers rely on being importable.
 PUBLIC_MODULES = [
     "forestseg",

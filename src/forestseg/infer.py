@@ -70,7 +70,7 @@ def infer_to_files(
                     filled = np.ma.filled(arr, src_nodata).astype(np.float32)
                     valid = ~np.ma.getmaskarray(arr[0])
                     tile = np.zeros((bands, tile_size, tile_size), dtype=np.float32)
-                    tile_valid = np.zeros((tile_size, tile_size), dtype=bool)
+                    tile_valid: np.ndarray = np.zeros((tile_size, tile_size), dtype=bool)
                     tile[:, :hh, :ww] = np.where(np.ma.getmaskarray(arr), 0.0, filled)
                     tile_valid[:hh, :ww] = valid
                     tensors.append(tile[None, ...])
@@ -94,8 +94,8 @@ def infer_to_files(
                     valid_core = tile_valid[top : top + core_h, left : left + core_w] & normalized_valid_mask(
                         mprob[top : top + core_h, left : left + core_w]
                     )
-                    core_slice = np.full((core_h, core_w), FLOAT_NODATA, dtype=np.float32)
-                    unc_slice = np.full((core_h, core_w), FLOAT_NODATA, dtype=np.float32)
+                    core_slice: np.ndarray = np.full((core_h, core_w), FLOAT_NODATA, dtype=np.float32)
+                    unc_slice: np.ndarray = np.full((core_h, core_w), FLOAT_NODATA, dtype=np.float32)
                     if np.any(valid_core):
                         core_prob = mprob[top : top + core_h, left : left + core_w]
                         core_unc = vprob[top : top + core_h, left : left + core_w]

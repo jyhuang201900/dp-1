@@ -86,9 +86,9 @@ def _source_scene(scene_sh: str) -> dict[str, str]:
             stderr=subprocess.STDOUT,
         )
     except FileNotFoundError:
-        vals = _parse_scene_file_fallback(scene_sh)
-        vals["GENERATED_EXPORT_DIR"] = _wsl_to_windows_path(vals.get("GENERATED_EXPORT_DIR", ""))
-        return vals
+        fallback_vals = _parse_scene_file_fallback(scene_sh)
+        fallback_vals["GENERATED_EXPORT_DIR"] = _wsl_to_windows_path(fallback_vals.get("GENERATED_EXPORT_DIR", ""))
+        return fallback_vals
     except subprocess.CalledProcessError as exc:
         output = (exc.output or "").strip()
         raise RuntimeError(f"加载 scene.sh 失败：{scene_sh}。{output}") from exc

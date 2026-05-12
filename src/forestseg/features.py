@@ -31,7 +31,7 @@ def _normalize_optional_raster(input_path: str, output_path: str, pmin: float = 
 def _apply_transform(arr: np.ndarray, transform: dict[str, Any] | None) -> np.ndarray:
     if not transform:
         return arr
-    out = arr.astype(np.float32, copy=True)
+    out: np.ndarray = arr.astype(np.float32, copy=True)
     valid = np.isfinite(out) & (out != FLOAT_NODATA)
     if not np.any(valid):
         return out

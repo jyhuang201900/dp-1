@@ -79,6 +79,9 @@ path = "src/forestseg/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/forestseg"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/forestseg/py.typed" = "forestseg/py.typed"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "src/forestseg",
@@ -155,26 +158,13 @@ warn_redundant_casts = true
 follow_imports = "skip"
 ignore_missing_imports = true
 allow_redefinition = true
+# Codes kept here are the ones that actually fire on the current tree.
+# All in-repo fixable codes (var-annotated, no-redef, assignment, operator,
+# arg-type) have been addressed inline. The two remaining disables are
+# purely about third-party stub gaps (rasterio, geopandas, etc.).
 disable_error_code = [
     "import-untyped",
     "import-not-found",
-    "no-redef",
-    "attr-defined",
-    "arg-type",
-    "assignment",
-    "var-annotated",
-    "return-value",
-    "operator",
-    "index",
-    "call-overload",
-    "valid-type",
-    "misc",
-    "union-attr",
-    "name-defined",
-    "call-arg",
-    "override",
-    "return",
-    "unreachable",
 ]
 
 [tool.pytest.ini_options]

@@ -23,6 +23,8 @@ import os
 import sys
 from typing import TextIO
 
+__all__ = ["configure_logging", "get_logger"]
+
 _DEFAULT_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 _DEFAULT_DATEFMT = "%Y-%m-%dT%H:%M:%S"
 
