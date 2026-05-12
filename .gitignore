@@ -1,0 +1,62 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Build / distribution ---
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Tooling caches ---
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- IDEs / editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# --- Project runtime artifacts ---
+work/
+outputs/
+
+# --- Large / generated GIS artifacts (keep small samples only) ---
+*.tif
+*.tiff
+*.vrt
+*.aux.xml
+
+# --- Logs ---
+*.log
+logs/
