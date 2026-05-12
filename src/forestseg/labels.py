@@ -15,6 +15,8 @@ from rasterio.crs import CRS
 from rasterio.warp import transform_geom
 from shapely.geometry import Point, mapping, shape
 
+from ._io import atomic_write_json
+
 VALID_GEOMETRY_TYPE = "Point"
 MIN_SPLIT_CLASS_WARNING_COUNT = 3
 SEVERE_CLASS_IMBALANCE_RATIO = 4.0
@@ -670,7 +672,13 @@ def split_points_by_grid(
 
 
 def save_points_json(path: str, points: list[LabelPoint], meta: dict[str, Any] | None = None) -> str:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """Atomically write ``points`` (with ``meta``) to ``path`` as JSON.
+
+    The points artefact (``samples_train.json`` / ``samples_val.json``)
+    is read by every subsequent stage, so a torn write would silently
+    poison training and validation; :func:`forestseg._io.atomic_write_json`
+    guarantees readers see either the previous file or the full new one.
+    """
     payload = {
         "meta": meta or {},
         "points": [
@@ -678,9 +686,7 @@ def save_points_json(path: str, points: list[LabelPoint], meta: dict[str, Any] |
             for pt in points
         ],
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    return path
+    return atomic_write_json(path, payload)
 
 
 def load_points_json(path: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:

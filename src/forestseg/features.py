@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
 import numpy as np
 import rasterio
 
+from ._io import atomic_write_json
 from .io_raster import FLOAT_NODATA, normalize_clip
 
 
@@ -118,6 +118,5 @@ def build_feature_stack(
         "output_path": output_path,
     }
     meta_path = os.path.splitext(output_path)[0] + "_meta.json"
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    atomic_write_json(meta_path, meta)
     return meta

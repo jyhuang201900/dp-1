@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import numpy as np
+
+from ._io import atomic_write_json
 
 
 def binary_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5) -> dict[str, Any]:
@@ -31,6 +32,11 @@ def binary_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.
 
 
 def save_metrics(path: str, metrics: dict[str, Any]) -> str:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(metrics, f, ensure_ascii=False, indent=2)
-    return path
+    """Atomically write ``metrics`` to ``path`` as JSON; return ``path``.
+
+    The metrics artefact (``metrics_val.json``) is consumed by both the RL
+    fusion driver and the per-round snapshot, so a torn write would block
+    later rounds — :func:`forestseg._io.atomic_write_json` guarantees
+    readers see either the previous contents or the full new payload.
+    """
+    return atomic_write_json(path, metrics)
