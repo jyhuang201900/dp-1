@@ -28,6 +28,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Bump `ruff-pre-commit` to `v0.15.12` so the pinned hook understands
   the `RUF043` selector already used in `pyproject.toml`.
 - `configs/pipeline.windows.yaml`: trim trailing blank line (end-of-file-fixer).
+- Shrink `tool.mypy.disable_error_code` from 19 codes down to 4
+  (`import-untyped`, `import-not-found`, `arg-type`, `operator`).
+  The remaining codes are the only ones that still fire on the tree;
+  the easy ones (`var-annotated`, `no-redef`, `assignment`) were
+  addressed inline by annotating a handful of NumPy locals and
+  resolving a shadowed name in `scene_runtime.py`. Mypy is meaningfully
+  stricter now without touching public-facing types.
+
+### Tests
+
+- `tests/test_rl_history.py`: new direct unit-test module covering
+  `_load_rl_history` and `_validate_rl_history_entry`
+  (12 cases — happy path, malformed JSON, non-list payload, non-dict
+  entry, empty-dict entry, unknown selection-metric downgrade, negative
+  reward, mismatched top-level reward, legacy payload normalization).
+  The existing integration coverage in `test_cli_preflight.py` is
+  unchanged.
 
 ## [0.2.0] — 2025-05-12 — `dp-1` refactor
 

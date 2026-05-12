@@ -54,9 +54,9 @@ def make_training_batch(
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     batch = balanced_sample_points(points, batch_size=batch_size, rng=rng)
-    x = np.zeros((batch_size, ds.count, tile_size, tile_size), dtype=np.float32)
-    y = np.zeros((batch_size, 1, tile_size, tile_size), dtype=np.float32)
-    m = np.zeros((batch_size, 1, tile_size, tile_size), dtype=np.float32)
+    x: np.ndarray = np.zeros((batch_size, ds.count, tile_size, tile_size), dtype=np.float32)
+    y: np.ndarray = np.zeros((batch_size, 1, tile_size, tile_size), dtype=np.float32)
+    m: np.ndarray = np.zeros((batch_size, 1, tile_size, tile_size), dtype=np.float32)
     for i, pt in enumerate(batch):
         feat, mask = read_feature_patch(ds, float(pt["x"]), float(pt["y"]), tile_size=tile_size)
         x[i] = feat
@@ -76,7 +76,7 @@ def evaluate_points(
     import torch
 
     y_true = np.asarray([int(p["label"]) for p in points], dtype=np.uint8)
-    y_prob = np.zeros(len(points), dtype=np.float32)
+    y_prob: np.ndarray = np.zeros(len(points), dtype=np.float32)
     for start in range(0, len(points), batch_size):
         chunk = points[start : start + batch_size]
         feats = []

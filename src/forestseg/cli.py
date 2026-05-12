@@ -1470,7 +1470,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
     stagnant_rounds = 0
     current_stage = "preflight"
     current_round: int | None = None
-    restore_outcome = {
+    restore_outcome: dict[str, list[str]] = {
         "restored_optional_artifacts": [],
         "failed_optional_artifacts": [],
         "skipped_optional_artifacts": [],

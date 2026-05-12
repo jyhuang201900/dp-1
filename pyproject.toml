@@ -158,26 +158,15 @@ warn_redundant_casts = true
 follow_imports = "skip"
 ignore_missing_imports = true
 allow_redefinition = true
+# Codes kept here are the ones that actually fire on the current tree.
+# Easy fixes (var-annotated, no-redef, assignment) were already addressed
+# inline; arg-type and operator remain because they reach into call sites
+# that need a wider refactor.
 disable_error_code = [
     "import-untyped",
     "import-not-found",
-    "no-redef",
-    "attr-defined",
     "arg-type",
-    "assignment",
-    "var-annotated",
-    "return-value",
     "operator",
-    "index",
-    "call-overload",
-    "valid-type",
-    "misc",
-    "union-attr",
-    "name-defined",
-    "call-arg",
-    "override",
-    "return",
-    "unreachable",
 ]
 
 [tool.pytest.ini_options]
