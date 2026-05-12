@@ -28,14 +28,33 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Bump `ruff-pre-commit` to `v0.15.12` so the pinned hook understands
   the `RUF043` selector already used in `pyproject.toml`.
 - `configs/pipeline.windows.yaml`: trim trailing blank line (end-of-file-fixer).
-- Shrink `tool.mypy.disable_error_code` from 19 codes down to 3
-  (`import-untyped`, `import-not-found`, `arg-type`). The remaining
-  codes are the only ones that still fire on the tree; the easy ones
-  (`var-annotated`, `no-redef`, `assignment`, `operator`) were
-  addressed inline by annotating a handful of NumPy locals, resolving
-  a shadowed name in `scene_runtime.py`, and narrowing `metrics[...]`
-  reads in `rl_policy.py` before the `+` reductions. Mypy is
-  meaningfully stricter now without touching public-facing types.
+- Shrink `tool.mypy.disable_error_code` from 19 codes down to **2**
+  (`import-untyped`, `import-not-found` — both are third-party
+  stub-gap codes, not in-repo issues). The previously-disabled codes
+  (`var-annotated`, `no-redef`, `assignment`, `operator`, `arg-type`)
+  are now all addressed inline:
+  - `var-annotated`: a handful of NumPy locals annotated explicitly.
+  - `no-redef`: resolve a shadowed name in `scene_runtime.py`.
+  - `operator`: narrow `metrics[...]` reads in `rl_policy.py` before
+    the `+` reductions.
+  - `arg-type` (this round):
+    - `cli.py`: drop the `**common_kwargs` / `**read_kwargs`
+      indirection in `cmd_prepare_label_points` and
+      `cmd_check_label_points`. The kwargs dicts had heterogeneous
+      values (`float | str | Any | None`) so mypy couldn't reconcile
+      the unpack with the target `validate_label_points* /
+      read_label_points*` signatures. The label-mode-dependent paths
+      now narrow `positive_path` / `negative_path` / `single_path`
+      with explicit `assert ... is not None` and pass each argument
+      by name with its correctly-typed local.
+    - `rl_policy.py`: explicitly annotate the fallback metrics dict
+      as `dict[str, Any]` so the later `metrics["accuracy"]`-style
+      reads stay `Any`-typed.
+    - `_rl_history.py`: narrow `selected_metric_value` to
+      `int | float | str` (rejecting `bool` and anything else) before
+      casting to `float`.
+  Mypy is meaningfully stricter now without touching public-facing
+  types.
 - Modularize `forestseg.cli` by extracting cohesive blocks into a set
   of small private sibling modules. Each new module has a
   module-level docstring and an explicit `__all__`. Every moved name

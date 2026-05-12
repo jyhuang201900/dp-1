@@ -159,13 +159,12 @@ follow_imports = "skip"
 ignore_missing_imports = true
 allow_redefinition = true
 # Codes kept here are the ones that actually fire on the current tree.
-# Easy fixes (var-annotated, no-redef, assignment, operator) were already
-# addressed inline; arg-type remains because it reaches into call sites
-# that would need a wider refactor (mostly kwargs unpacking in cli.py).
+# All in-repo fixable codes (var-annotated, no-redef, assignment, operator,
+# arg-type) have been addressed inline. The two remaining disables are
+# purely about third-party stub gaps (rasterio, geopandas, etc.).
 disable_error_code = [
     "import-untyped",
     "import-not-found",
-    "arg-type",
 ]
 
 [tool.pytest.ini_options]

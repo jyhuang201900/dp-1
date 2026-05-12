@@ -444,58 +444,76 @@ def cmd_prepare_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
     origin_x = float(transform.c) if transform is not None else 0.0
     origin_y = float(transform.f) if transform is not None else 0.0
     split_seed = _validate_non_negative_int(lcfg.get("split_seed", 42), "labels.split_seed")
-    common_kwargs = {
-        "class_field": str(lcfg.get("class_field", "class")),
-        "positive_value": str(lcfg.get("positive_value", "1")),
-        "negative_value": str(lcfg.get("negative_value", "0")),
-        "target_crs": crs,
-        "grid_size": _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size"),
-        "origin_x": origin_x,
-        "origin_y": origin_y,
-        "train_ratio": _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio"),
-        "seed": split_seed,
-    }
+    class_field = str(lcfg.get("class_field", "class"))
+    positive_value = str(lcfg.get("positive_value", "1"))
+    negative_value = str(lcfg.get("negative_value", "0"))
+    grid_size = _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size")
+    train_ratio = _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio")
+    layer = lcfg.get("layer")
     if label_mode == "dual":
+        assert positive_path is not None and negative_path is not None
         validation_report = validate_label_points_from_two_files(
             positive_path=positive_path,
             negative_path=negative_path,
-            positive_layer=lcfg.get("layer"),
-            negative_layer=lcfg.get("layer"),
-            **common_kwargs,
+            positive_layer=layer,
+            negative_layer=layer,
+            class_field=class_field,
+            positive_value=positive_value,
+            negative_value=negative_value,
+            target_crs=crs,
+            grid_size=grid_size,
+            origin_x=origin_x,
+            origin_y=origin_y,
+            train_ratio=train_ratio,
+            seed=split_seed,
         )
     else:
+        assert single_path is not None
         validation_report = validate_label_points(
-            path=str(single_path),
-            layer=lcfg.get("layer"),
-            **common_kwargs,
+            path=single_path,
+            layer=layer,
+            class_field=class_field,
+            positive_value=positive_value,
+            negative_value=negative_value,
+            target_crs=crs,
+            grid_size=grid_size,
+            origin_x=origin_x,
+            origin_y=origin_y,
+            train_ratio=train_ratio,
+            seed=split_seed,
         )
     validation_risk = dict(validation_report.get("risk") or {})
     if not bool(validation_risk.get("can_run", True)):
         blocking = list(validation_risk.get("blocking") or [])
         raise ValueError("；".join(blocking) if blocking else "标签检查未通过，无法生成训练/验证样本。")
 
-    read_kwargs = {
-        "class_field": str(lcfg.get("class_field", "class")),
-        "positive_value": str(lcfg.get("positive_value", "1")),
-        "negative_value": str(lcfg.get("negative_value", "0")),
-        "target_crs": crs,
-        "grid_size": _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size"),
-        "origin_x": origin_x,
-        "origin_y": origin_y,
-    }
     if label_mode == "dual":
+        assert positive_path is not None and negative_path is not None
         points = read_label_points_from_two_files(
             positive_path=positive_path,
             negative_path=negative_path,
-            positive_layer=lcfg.get("layer"),
-            negative_layer=lcfg.get("layer"),
-            **read_kwargs,
+            positive_layer=layer,
+            negative_layer=layer,
+            class_field=class_field,
+            positive_value=positive_value,
+            negative_value=negative_value,
+            target_crs=crs,
+            grid_size=grid_size,
+            origin_x=origin_x,
+            origin_y=origin_y,
         )
     else:
+        assert single_path is not None
         points = read_label_points(
-            path=str(single_path),
-            layer=lcfg.get("layer"),
-            **read_kwargs,
+            path=single_path,
+            layer=layer,
+            class_field=class_field,
+            positive_value=positive_value,
+            negative_value=negative_value,
+            target_crs=crs,
+            grid_size=grid_size,
+            origin_x=origin_x,
+            origin_y=origin_y,
         )
 
     train_points, val_points, split_meta = split_points_by_grid(
@@ -531,30 +549,43 @@ def cmd_check_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
     origin_x = float(transform.c) if transform is not None else 0.0
     origin_y = float(transform.f) if transform is not None else 0.0
     split_seed = _validate_non_negative_int(lcfg.get("split_seed", 42), "labels.split_seed")
-    common_kwargs = {
-        "class_field": str(lcfg.get("class_field", "class")),
-        "positive_value": str(lcfg.get("positive_value", "1")),
-        "negative_value": str(lcfg.get("negative_value", "0")),
-        "target_crs": crs,
-        "grid_size": _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size"),
-        "origin_x": origin_x,
-        "origin_y": origin_y,
-        "train_ratio": _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio"),
-        "seed": split_seed,
-    }
+    class_field = str(lcfg.get("class_field", "class"))
+    positive_value = str(lcfg.get("positive_value", "1"))
+    negative_value = str(lcfg.get("negative_value", "0"))
+    grid_size = _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size")
+    train_ratio = _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio")
+    layer = lcfg.get("layer")
     if label_mode == "dual":
+        assert positive_path is not None and negative_path is not None
         report = validate_label_points_from_two_files(
             positive_path=positive_path,
             negative_path=negative_path,
-            positive_layer=lcfg.get("layer"),
-            negative_layer=lcfg.get("layer"),
-            **common_kwargs,
+            positive_layer=layer,
+            negative_layer=layer,
+            class_field=class_field,
+            positive_value=positive_value,
+            negative_value=negative_value,
+            target_crs=crs,
+            grid_size=grid_size,
+            origin_x=origin_x,
+            origin_y=origin_y,
+            train_ratio=train_ratio,
+            seed=split_seed,
         )
     else:
+        assert single_path is not None
         report = validate_label_points(
-            path=str(single_path),
-            layer=lcfg.get("layer"),
-            **common_kwargs,
+            path=single_path,
+            layer=layer,
+            class_field=class_field,
+            positive_value=positive_value,
+            negative_value=negative_value,
+            target_crs=crs,
+            grid_size=grid_size,
+            origin_x=origin_x,
+            origin_y=origin_y,
+            train_ratio=train_ratio,
+            seed=split_seed,
         )
     risk = dict(report.get("risk") or {})
     report["schema_version"] = 2

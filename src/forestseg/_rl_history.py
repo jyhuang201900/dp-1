@@ -157,7 +157,7 @@ def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None 
     if selected_metric not in normalized_validation_metrics:
         raise ValueError(f"Invalid rl_history entries: {history_path}")
     selected_metric_value = normalized_validation_metrics.get(selected_metric)
-    if isinstance(selected_metric_value, bool):
+    if isinstance(selected_metric_value, bool) or not isinstance(selected_metric_value, int | float | str):
         raise ValueError(f"Invalid rl_history entries: {history_path}")
     try:
         parsed_selected_metric = float(selected_metric_value)

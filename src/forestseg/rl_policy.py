@@ -137,7 +137,7 @@ def choose_fusion_by_validation(
             morph_kernel=int(resolved_postprocess["morph_kernel"]),
             shadow_penalty=float(resolved_postprocess["shadow_penalty"]),
         )
-        metrics = {
+        fallback_metrics: dict[str, Any] = {
             "threshold": float(p.threshold),
             "accuracy": 0.0,
             "precision": 0.0,
@@ -149,7 +149,7 @@ def choose_fusion_by_validation(
             "reward": 0.0,
             "valid_points_used": 0,
         }
-        return p, metrics, "validation_fallback_fixed"
+        return p, fallback_metrics, "validation_fallback_fixed"
 
     y_true = y_true[valid]
     dl_vals = dl_vals[valid]
