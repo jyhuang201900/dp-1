@@ -236,6 +236,12 @@ def _with_stage_override(cfg: dict[str, Any], stage_override: int | None) -> dic
 
 
 def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Validate config + on-disk preconditions before any pipeline stage runs.
+
+    Reads ``labels`` / ``dl`` / ``dem`` / ``rl_loop`` / ``fusion`` sections,
+    checks every required path exists, probes work-dir writability, and
+    returns a ``preflight`` block embedded in the closed-loop summary.
+    """
     work = ensure_work(cfg)
     lcfg = cfg.get("labels", {})
     dcfg = cfg.get("dl", {})
@@ -355,6 +361,7 @@ def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_prepare_input(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Crop / reproject the source raster into ``work/input.tif`` + scene meta."""
     work = ensure_work(cfg)
     inp_cfg = cfg.get("input", {})
     scene = resolve_scene_input(
@@ -387,6 +394,7 @@ def _load_scene_meta(work: str) -> dict[str, Any]:
 
 
 def cmd_build_spec_tex(cfg: dict[str, Any]) -> dict[str, str]:
+    """Compute spectral / texture probability rasters from the prepared input."""
     work = ensure_work(cfg)
     prepared = wf(work, "input")
     if not os.path.exists(prepared):
@@ -543,6 +551,7 @@ def _read_label_points_for_spec(spec: LabelSpec, geometry: LabelGeometry) -> lis
 
 
 def cmd_prepare_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Validate label sources, snap to grid, and write train/val splits."""
     work = ensure_work(cfg)
     prepared = wf(work, "input")
     if not os.path.exists(prepared):
@@ -578,6 +587,7 @@ def cmd_prepare_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_check_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Run label validation only (no train/val split, no IO mutations)."""
     work = ensure_work(cfg)
     prepared = wf(work, "input")
     if not os.path.exists(prepared):
@@ -599,6 +609,7 @@ def cmd_check_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_build_feature_stack(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the multi-channel feature stack used by the DL trainer."""
     work = ensure_work(cfg)
     prepared = wf(work, "input")
     if not os.path.exists(prepared):
@@ -622,6 +633,7 @@ def cmd_build_feature_stack(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_train_or_load_dl(cfg: dict[str, Any], force_train: bool = False) -> dict[str, Any]:
+    """Train (or reuse) the DL model and emit ``prob_dl`` + uncertainty rasters."""
     work = ensure_work(cfg)
     if not os.path.exists(wf(work, "feature_stack")):
         cmd_build_feature_stack(cfg)
@@ -681,6 +693,7 @@ def cmd_train_or_load_dl(cfg: dict[str, Any], force_train: bool = False) -> dict
 
 
 def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) -> dict[str, Any]:
+    """Pick fusion params (grid or bandit), fuse probabilities, append rl_history."""
     work = ensure_work(cfg)
     loop_cfg = cfg.get("rl_loop", {})
     rl_selection_metric = _validate_choice(
@@ -833,6 +846,7 @@ def _load_selected_params(work: str, cfg: dict[str, Any]) -> FusionParams:
 
 
 def cmd_postprocess_export(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Thresholding + morphology on ``prob_fused``; export final raster + vector."""
     work = ensure_work(cfg)
     if not os.path.exists(wf(work, "prob_fused")):
         cmd_run_rl_fusion(cfg)
@@ -1101,6 +1115,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
 
 
 def cmd_run_all(cfg: dict[str, Any], force_train: bool = False, stage_override: int | None = None) -> dict[str, Any]:
+    """End-to-end driver: preflight -> stages -> closed loop -> postprocess."""
     _log_progress("run-all: preflight-check")
     cmd_preflight_check(_with_stage_override(cfg, stage_override))
     _log_progress("run-all: prepare-input")
