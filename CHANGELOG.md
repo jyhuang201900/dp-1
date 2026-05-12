@@ -28,13 +28,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Bump `ruff-pre-commit` to `v0.15.12` so the pinned hook understands
   the `RUF043` selector already used in `pyproject.toml`.
 - `configs/pipeline.windows.yaml`: trim trailing blank line (end-of-file-fixer).
-- Shrink `tool.mypy.disable_error_code` from 19 codes down to 4
-  (`import-untyped`, `import-not-found`, `arg-type`, `operator`).
-  The remaining codes are the only ones that still fire on the tree;
-  the easy ones (`var-annotated`, `no-redef`, `assignment`) were
-  addressed inline by annotating a handful of NumPy locals and
-  resolving a shadowed name in `scene_runtime.py`. Mypy is meaningfully
-  stricter now without touching public-facing types.
+- Shrink `tool.mypy.disable_error_code` from 19 codes down to 3
+  (`import-untyped`, `import-not-found`, `arg-type`). The remaining
+  codes are the only ones that still fire on the tree; the easy ones
+  (`var-annotated`, `no-redef`, `assignment`, `operator`) were
+  addressed inline by annotating a handful of NumPy locals, resolving
+  a shadowed name in `scene_runtime.py`, and narrowing `metrics[...]`
+  reads in `rl_policy.py` before the `+` reductions. Mypy is
+  meaningfully stricter now without touching public-facing types.
+- Extract RL-history helpers (`_normalize_legacy_rl_history_entry`,
+  `_validate_rl_history_entry`, `_load_rl_history`, `_history_entry`,
+  `_rewrite_latest_rl_history_entry`, plus
+  `LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS` and the
+  `VALID_*_SELECTION_METRICS` whitelists) from `cli.py` into a new
+  `forestseg._rl_history` module. Extract the small scalar validators
+  (`_validate_ratio`, `_validate_positive_*`, `_validate_choice`,
+  `_validate_unit_interval`, `_validate_non_negative_*`,
+  `_validate_stage_int`, `_validate_bool`) into a new
+  `forestseg._validators` module. Both names continue to be re-exported
+  from `forestseg.cli` so the existing public-attribute surface and the
+  test imports stay unchanged. `cli.py` drops ~340 lines and is now
+  focused on argparse plumbing and command handlers.
 
 ### Tests
 
