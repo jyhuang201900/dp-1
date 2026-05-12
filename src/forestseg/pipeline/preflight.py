@@ -20,9 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ._bandit_config import _resolve_bandit_config
-from ._rl_history import VALID_RL_SELECTION_METRICS, VALID_TRAIN_SELECTION_METRICS
-from ._validators import (
+from ..core.validators import (
     _validate_bool,
     _validate_choice,
     _validate_non_negative_float,
@@ -32,6 +30,8 @@ from ._validators import (
     _validate_ratio,
     _validate_unit_interval,
 )
+from ..rl.bandit_config import _resolve_bandit_config
+from ..rl.history import VALID_RL_SELECTION_METRICS, VALID_TRAIN_SELECTION_METRICS
 
 __all__ = [
     "DLPreflight",

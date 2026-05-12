@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._validators import _validate_bool, _validate_positive_int, _validate_unit_interval
+from ..core.validators import _validate_bool, _validate_positive_int, _validate_unit_interval
 
 __all__ = ["_resolve_bandit_config"]
 

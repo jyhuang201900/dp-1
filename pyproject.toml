@@ -67,7 +67,7 @@ dev = [
 ]
 
 [project.scripts]
-forestseg = "forestseg.cli:main"
+forestseg = "forestseg.pipeline.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/jyhuang201900/dp-1"
@@ -138,7 +138,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011", "B017", "SIM", "RUF043"]
-"src/forestseg/cli.py" = ["C901"]  # legacy CLI complexity
+"src/forestseg/cli.py" = ["C901", "F401", "F403"]  # backward-compat stub
+"src/forestseg/pipeline/cli.py" = ["C901"]  # legacy CLI complexity
+"src/forestseg/*.py" = ["F401", "F403"]  # backward-compat stubs
 
 [tool.ruff.lint.isort]
 known-first-party = ["forestseg"]

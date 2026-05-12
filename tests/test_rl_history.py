@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from forestseg.cli import (
+from forestseg.pipeline.cli import (
     LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS,
     _load_rl_history,
     _validate_rl_history_entry,

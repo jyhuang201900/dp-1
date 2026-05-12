@@ -15,7 +15,7 @@ from rasterio.crs import CRS
 from rasterio.warp import transform_geom
 from shapely.geometry import Point, mapping, shape
 
-from ._io import atomic_write_json
+from ..core.io import atomic_write_json
 
 VALID_GEOMETRY_TYPE = "Point"
 MIN_SPLIT_CLASS_WARNING_COUNT = 3

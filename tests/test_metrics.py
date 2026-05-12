@@ -1,6 +1,6 @@
 import numpy as np
 
-from forestseg.metrics import binary_metrics
+from forestseg.export_pkg.metrics import binary_metrics
 
 
 def test_binary_metrics_returns_expected_values():

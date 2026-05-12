@@ -3,7 +3,7 @@ import copy
 import numpy as np
 import pytest
 
-from forestseg.rl_policy import choose_fusion, choose_fusion_by_validation
+from forestseg.fusion.policy import choose_fusion, choose_fusion_by_validation
 
 FIXED_PARAMS = {
     "lambda_spec": 0.2,
@@ -27,11 +27,11 @@ GRID_PARAMS = {
 @pytest.mark.parametrize("bad_stage", [-1, 2, 3])
 def test_choose_fusion_rejects_legacy_or_out_of_contract_stages(monkeypatch, bad_stage):
     monkeypatch.setattr(
-        "forestseg.rl_policy.run_stage0",
+        "forestseg.fusion.policy.run_stage0",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("run_stage0 should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.rl_policy.run_stage1_grid",
+        "forestseg.fusion.policy.run_stage1_grid",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("run_stage1_grid should not run")),
     )
 
@@ -50,7 +50,7 @@ def test_choose_fusion_rejects_legacy_or_out_of_contract_stages(monkeypatch, bad
 @pytest.mark.parametrize("bad_stage", [-1, 2, 3])
 def test_choose_fusion_by_validation_rejects_legacy_or_out_of_contract_stages(monkeypatch, bad_stage):
     monkeypatch.setattr(
-        "forestseg.rl_policy.sample_raster_at_points",
+        "forestseg.fusion.policy.sample_raster_at_points",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sample_raster_at_points should not run")),
     )
 
@@ -70,7 +70,7 @@ def test_choose_fusion_by_validation_falls_back_when_no_valid_points(monkeypatch
     def fake_sample(*args, **kwargs):
         return [float("nan"), float("nan")]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
     val_points = [{"label": 1}, {"label": 0}]
 
     candidate, metrics, stage = choose_fusion_by_validation(
@@ -101,7 +101,7 @@ def test_choose_fusion_by_validation_falls_back_when_no_valid_points_for_stage1(
     def fake_sample(*args, **kwargs):
         return [float("nan"), float("nan")]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
 
     candidate, metrics, stage = choose_fusion_by_validation(
         stage=1,
@@ -128,7 +128,7 @@ def test_choose_fusion_by_validation_rejects_empty_grid_dimension(monkeypatch):
     def fake_sample(path, points):
         return [0.9, 0.1]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
     val_points = [{"label": 1}, {"label": 0}]
     invalid_grid_params = copy.deepcopy(GRID_PARAMS)
     invalid_grid_params["threshold"] = []
@@ -149,7 +149,7 @@ def test_choose_fusion_by_validation_rejects_missing_grid_dimension(monkeypatch)
     def fake_sample(path, points):
         return [0.9, 0.1]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
     val_points = [{"label": 1}, {"label": 0}]
     invalid_grid_params = copy.deepcopy(GRID_PARAMS)
     invalid_grid_params.pop("threshold")
@@ -170,7 +170,7 @@ def test_choose_fusion_by_validation_rejects_scalar_grid_dimension(monkeypatch):
     def fake_sample(path, points):
         return [0.9, 0.1]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
     val_points = [{"label": 1}, {"label": 0}]
     invalid_grid_params = copy.deepcopy(GRID_PARAMS)
     invalid_grid_params["threshold"] = 0.5
@@ -191,7 +191,7 @@ def test_choose_fusion_by_validation_rejects_invalid_grid_when_no_valid_points(m
     def fake_sample(*args, **kwargs):
         return [float("nan"), float("nan")]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
     invalid_grid_params = copy.deepcopy(GRID_PARAMS)
     invalid_grid_params["threshold"] = []
 
@@ -217,7 +217,7 @@ def test_choose_fusion_by_validation_uses_fixed_postprocess_params_for_validatio
     def fake_sample(path, points):
         return sample_values[path]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
 
     candidate, metrics, stage = choose_fusion_by_validation(
         stage=1,
@@ -254,7 +254,7 @@ def test_choose_fusion_by_validation_falls_back_to_grid_postprocess_params_when_
     def fake_sample(path, points):
         return sample_values[path]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
 
     candidate, metrics, stage = choose_fusion_by_validation(
         stage=1,
