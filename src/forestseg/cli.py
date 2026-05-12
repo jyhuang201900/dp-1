@@ -35,6 +35,7 @@ from ._artifacts import (
     _round_artifact_paths,
 )
 from ._bandit_config import _resolve_bandit_config as _resolve_bandit_config
+from ._bandit_runtime import BanditRuntime
 from ._closed_loop import (
     build_artifact_paths_block as _build_closed_loop_artifacts,
     build_best_round_restore_plan as _build_best_round_restore_plan,
@@ -91,13 +92,6 @@ from ._validators import (
     _validate_ratio,
     _validate_stage_int as _validate_stage_int,
     _validate_unit_interval,
-)
-from .bandit import (
-    build_bandit_action_space,
-    load_or_init_bandit_state,
-    save_bandit_state,
-    select_bandit_action,
-    update_bandit_state,
 )
 from .export import export_generated_rasters, export_selected_params, export_vector_streaming
 from .features import build_feature_stack
@@ -717,43 +711,13 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
     validation_reward: dict[str, Any] = {}
     stage = fusion_stage
 
-    bandit_enabled = bool(bandit_config["enabled"]) and stage == 1
-    policy_type = "bandit" if bandit_enabled else "grid"
-    bandit_meta: dict[str, Any] = {
-        "enabled": bandit_enabled,
-        "action_id": None,
-        "explore": None,
-        "epsilon_before": None,
-        "epsilon_after": None,
-    }
+    bandit = BanditRuntime(bandit_config=bandit_config, fusion_stage=stage, work=work)
 
     if not os.path.exists(wf(work, "samples_val")):
         cmd_prepare_label_points(cfg)
     val_points, split_meta = load_points_json(wf(work, "samples_val"))
 
-    runtime_grid_params = dict(grid_params)
-    bandit_state_path = os.path.join(work, "bandit_state.json")
-    if bandit_enabled:
-        action_space = build_bandit_action_space(grid_params)
-        bandit_state = load_or_init_bandit_state(
-            state_path=bandit_state_path,
-            actions=action_space,
-            epsilon=float(bandit_config["epsilon"]),
-            min_epsilon=float(bandit_config["min_epsilon"]),
-            epsilon_decay=float(bandit_config["epsilon_decay"]),
-        )
-        selected_action, explore = select_bandit_action(
-            state=bandit_state,
-            actions=action_space,
-            seed=int(bandit_config["seed"]),
-        )
-        bandit_meta["action_id"] = int(selected_action["id"])
-        bandit_meta["explore"] = bool(explore)
-        bandit_meta["epsilon_before"] = float(bandit_state.get("epsilon", bandit_config["epsilon"]))
-        runtime_grid_params = dict(runtime_grid_params)
-        runtime_grid_params["lambda_spec"] = [float(selected_action["lambda_spec"])]
-        runtime_grid_params["lambda_tex"] = [float(selected_action["lambda_tex"])]
-        runtime_grid_params["threshold"] = [float(selected_action["threshold"])]
+    runtime_grid_params = bandit.select_action(grid_params)
 
     selected, validation_reward, stage_used = choose_fusion_by_validation(
         stage=stage,
@@ -765,16 +729,7 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
         grid_params=runtime_grid_params,
     )
 
-    if bandit_enabled:
-        reward_for_update = float(validation_reward.get("reward", 0.0))
-        updated_bandit_state = update_bandit_state(
-            state=bandit_state,
-            action_id=int(bandit_meta["action_id"]),
-            reward=reward_for_update,
-            alpha=float(bandit_config["alpha"]),
-        )
-        save_bandit_state(bandit_state_path, updated_bandit_state)
-        bandit_meta["epsilon_after"] = float(updated_bandit_state["epsilon"])
+    bandit.record_reward(float(validation_reward.get("reward", 0.0)))
 
     with open(wf(work, "feature_feedback"), "w", encoding="utf-8") as f:
         json.dump(
@@ -826,8 +781,8 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
             "morph_kernel": selected.morph_kernel,
             "shadow_penalty": selected.shadow_penalty,
         },
-        "policy_type": policy_type,
-        "bandit": bandit_meta,
+        "policy_type": bandit.policy_type,
+        "bandit": bandit.meta,
         "state": state,
         "train_metrics": metrics,
         "validation_metrics": validation_reward,
