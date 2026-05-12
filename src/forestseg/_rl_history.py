@@ -35,7 +35,6 @@ __all__ = [
     "LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS",
     "VALID_RL_SELECTION_METRICS",
     "VALID_TRAIN_SELECTION_METRICS",
-    "_history_entry",
     "_load_rl_history",
     "_normalize_legacy_rl_history_entry",
     "_rewrite_latest_rl_history_entry",
@@ -209,37 +208,6 @@ def _load_rl_history(history_path: str) -> list[dict[str, Any]]:
     if not isinstance(loaded, list):
         raise ValueError(f"Invalid rl_history payload: {history_path}")
     return [_validate_rl_history_entry(entry, history_path, index=idx) for idx, entry in enumerate(loaded, start=1)]
-
-
-def _history_entry(
-    round_no: int,
-    selection_metric: str,
-    score: float,
-    reward: float,
-    train_metrics: dict[str, Any],
-    validation_metrics: dict[str, Any],
-    artifacts: dict[str, str],
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    entry: dict[str, Any] = {
-        "schema_version": 2,
-        "round": round_no,
-        "selection_metric": selection_metric,
-        "score": score,
-        "reward": reward,
-        "stage_used": None,
-        "params": None,
-        "checkpoint_path": None,
-        "trained": None,
-        "feedback_path": None,
-        "feature_meta": None,
-        "train_metrics": train_metrics,
-        "validation_metrics": validation_metrics,
-        "artifacts": artifacts,
-    }
-    if extra:
-        entry.update(extra)
-    return entry
 
 
 def _rewrite_latest_rl_history_entry(history_path: str, round_no: int, selection_metric: str, score: float) -> None:

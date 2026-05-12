@@ -26,8 +26,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from ._rl_history import _history_entry
-
 __all__ = [
     "ClosedLoopState",
     "build_artifact_paths_block",
@@ -195,51 +193,40 @@ def build_round_history_entries(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build the pair of history entries persisted for a single round.
 
-    Returns ``(loop_entry, metrics_entry)``. They share the base
-    ``extra`` block (stage, params, checkpoint, feedback). The
+    Returns ``(loop_entry, metrics_entry)``. They share every base
+    field (round/selection/score/reward + stage/params/checkpoint +
+    feedback + train/validation metrics + artifacts). The
     ``loop_entry`` additionally carries nested ``train`` and ``rl``
     sub-blocks that downstream consumers rely on for richer drill-down;
     the ``metrics_entry`` (written into ``metrics_round_history.json``)
     omits them to keep that artifact compact.
     """
-    base_extra: dict[str, Any] = {
-        "stage_used": rl_out.get("stage_used"),
-        "params": rl_out.get("params"),
-        "checkpoint_path": train_out.get("checkpoint_path"),
-        "trained": train_out.get("trained"),
+    stage_used = rl_out.get("stage_used")
+    params = rl_out.get("params")
+    checkpoint_path = train_out.get("checkpoint_path")
+    trained = train_out.get("trained")
+    base: dict[str, Any] = {
+        "schema_version": 2,
+        "round": round_no,
+        "selection_metric": selection_metric,
+        "score": score,
+        "reward": reward,
+        "stage_used": stage_used,
+        "params": params,
+        "checkpoint_path": checkpoint_path,
+        "trained": trained,
         "feedback_path": feedback_path,
         "feature_meta": feature_meta,
+        "train_metrics": train_metrics,
+        "validation_metrics": validation_metrics,
+        "artifacts": artifacts,
     }
-    loop_entry = _history_entry(
-        round_no=round_no,
-        selection_metric=selection_metric,
-        score=score,
-        reward=reward,
-        train_metrics=train_metrics,
-        validation_metrics=validation_metrics,
-        artifacts=artifacts,
-        extra={
-            **base_extra,
-            "train": {
-                "checkpoint_path": train_out.get("checkpoint_path"),
-                "trained": train_out.get("trained"),
-            },
-            "rl": {
-                "stage_used": rl_out.get("stage_used"),
-                "params": rl_out.get("params"),
-            },
-        },
-    )
-    metrics_entry = _history_entry(
-        round_no=round_no,
-        selection_metric=selection_metric,
-        score=score,
-        reward=reward,
-        train_metrics=train_metrics,
-        validation_metrics=validation_metrics,
-        artifacts=artifacts,
-        extra=dict(base_extra),
-    )
+    loop_entry = {
+        **base,
+        "train": {"checkpoint_path": checkpoint_path, "trained": trained},
+        "rl": {"stage_used": stage_used, "params": params},
+    }
+    metrics_entry = dict(base)
     return loop_entry, metrics_entry
 
 
