@@ -36,19 +36,45 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   a shadowed name in `scene_runtime.py`, and narrowing `metrics[...]`
   reads in `rl_policy.py` before the `+` reductions. Mypy is
   meaningfully stricter now without touching public-facing types.
-- Extract RL-history helpers (`_normalize_legacy_rl_history_entry`,
-  `_validate_rl_history_entry`, `_load_rl_history`, `_history_entry`,
-  `_rewrite_latest_rl_history_entry`, plus
-  `LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS` and the
-  `VALID_*_SELECTION_METRICS` whitelists) from `cli.py` into a new
-  `forestseg._rl_history` module. Extract the small scalar validators
-  (`_validate_ratio`, `_validate_positive_*`, `_validate_choice`,
-  `_validate_unit_interval`, `_validate_non_negative_*`,
-  `_validate_stage_int`, `_validate_bool`) into a new
-  `forestseg._validators` module. Both names continue to be re-exported
-  from `forestseg.cli` so the existing public-attribute surface and the
-  test imports stay unchanged. `cli.py` drops ~340 lines and is now
-  focused on argparse plumbing and command handlers.
+- Modularize `forestseg.cli` by extracting cohesive blocks into a set
+  of small private sibling modules. Each new module has a
+  module-level docstring and an explicit `__all__`. Every moved name
+  is re-exported from `forestseg.cli` via an `import X as X`
+  re-export, so the public attribute surface (`forestseg.cli.X`),
+  `test_public_api.PUBLIC_ATTRIBUTES`, and the existing test imports
+  are unchanged.
+  - `forestseg._constants` — `WORK_FILES`, `REQUIRED_FUSION_GRID_KEYS`,
+    `REQUIRED_FUSION_FIXED_PARAM_KEYS`, and the `wf()` path helper.
+  - `forestseg._paths` — `load_cfg`, `ensure_work`, `_log_progress`,
+    `_require_existing_path`, `_ensure_directory_writable`.
+  - `forestseg._validators` — the nine pure scalar validators
+    (`_validate_ratio` / `_validate_positive_*` / `_validate_choice`
+    / `_validate_unit_interval` / `_validate_non_negative_*` /
+    `_validate_stage_int` / `_validate_bool`).
+  - `forestseg._fusion_config` — `_resolve_fusion_stage`,
+    `_validate_fusion_config`, `_validate_fusion_param_value`,
+    `_validate_fusion_params`,
+    `_validate_fusion_param_candidates`.
+  - `forestseg._bandit_config` — `_resolve_bandit_config`.
+  - `forestseg._label_resolution` — `_resolve_label_paths`,
+    `_resolve_label_mode`, `_require_labels_for_preflight`.
+  - `forestseg._artifacts` — `_round_artifact_paths`,
+    `RestoreOutputsError`, `_optional_restore_outcome`. The on-disk
+    copy / snapshot / `_restore_outputs_atomically` helpers are kept
+    in `forestseg.cli` so the test suite's
+    `monkeypatch.setattr("forestseg.cli._require_json_copy", ...)`
+    style hooks continue to reach the actual call sites.
+  - `forestseg._feature_feedback` — `_feature_feedback_transforms`.
+  - `forestseg._rl_history` — `rl_history.json` IO + validation
+    (`_normalize_legacy_rl_history_entry`,
+    `_validate_rl_history_entry`, `_load_rl_history`,
+    `_history_entry`, `_rewrite_latest_rl_history_entry` plus the
+    `LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS` and
+    `VALID_*_SELECTION_METRICS` constants).
+- `cli.py` shrinks from ~1840 to ~1290 lines and is now focused on
+  argparse plumbing and command handlers.
+- Add `__all__` to `forestseg._logging`, `forestseg._validators`, and
+  `forestseg._rl_history` for consistency with the new modules.
 
 ### Tests
 

@@ -1,16 +1,66 @@
+"""Argparse + command-handler surface of the :mod:`forestseg` CLI.
+
+The actual building blocks live in small private siblings:
+
+- :mod:`forestseg._constants` — ``WORK_FILES``, fusion key tuples, ``wf``
+- :mod:`forestseg._paths` — config load, ``work_dir`` setup, path probes
+- :mod:`forestseg._validators` — small scalar validators
+- :mod:`forestseg._fusion_config` — ``fusion`` section validation
+- :mod:`forestseg._bandit_config` — ``rl_loop.bandit`` section validation
+- :mod:`forestseg._label_resolution` — ``labels`` section validation
+- :mod:`forestseg._artifacts` — round artifact paths + atomic restore
+- :mod:`forestseg._feature_feedback` — feature-feedback transforms
+- :mod:`forestseg._rl_history` — ``rl_history.json`` IO + validation
+
+Every name moved into a private module is re-exported from this module
+via explicit ``import X as X`` re-exports so the existing public
+attribute surface (``forestseg.cli.X``) and the test suite imports stay
+unchanged.
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import shutil
-import sys
 import tempfile
 from typing import Any
 
 import numpy as np
-import yaml
 
+from ._artifacts import (
+    RestoreOutputsError as RestoreOutputsError,
+    _optional_restore_outcome,
+    _round_artifact_paths,
+)
+from ._bandit_config import _resolve_bandit_config as _resolve_bandit_config
+from ._constants import (
+    REQUIRED_FUSION_FIXED_PARAM_KEYS as REQUIRED_FUSION_FIXED_PARAM_KEYS,
+    REQUIRED_FUSION_GRID_KEYS as REQUIRED_FUSION_GRID_KEYS,
+    WORK_FILES as WORK_FILES,
+    wf,
+)
+from ._feature_feedback import _feature_feedback_transforms as _feature_feedback_transforms
+from ._fusion_config import (
+    _resolve_fusion_stage as _resolve_fusion_stage,
+    _validate_fusion_config,
+    _validate_fusion_param_candidates as _validate_fusion_param_candidates,
+    _validate_fusion_param_value as _validate_fusion_param_value,
+    _validate_fusion_params as _validate_fusion_params,
+)
+from ._label_resolution import (
+    _require_labels_for_preflight,
+    _resolve_label_mode,
+    _resolve_label_paths as _resolve_label_paths,
+)
+from ._paths import (
+    _ensure_directory_writable as _ensure_directory_writable,
+    _log_progress,
+    _require_existing_path,
+    ensure_work,
+    load_cfg,
+)
 from ._rl_history import (
     LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS as LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS,
     VALID_RL_SELECTION_METRICS,
@@ -29,7 +79,7 @@ from ._validators import (
     _validate_positive_float,
     _validate_positive_int,
     _validate_ratio,
-    _validate_stage_int,
+    _validate_stage_int as _validate_stage_int,
     _validate_unit_interval,
 )
 from .bandit import (
@@ -70,207 +120,102 @@ from .spectral import spectral_probability
 from .texture import texture_probability
 from .train import train_supervised_model
 
-WORK_FILES = {
-    "input": "input_prepared.tif",
-    "prob_spec": "prob_spec.tif",
-    "conf_spec": "conf_spec.tif",
-    "prob_tex": "prob_tex.tif",
-    "tex_complexity": "tex_complexity.tif",
-    "conf_tex": "conf_tex.tif",
-    "feature_stack": "feature_stack.tif",
-    "prob_dl": "prob_dl.tif",
-    "unc_dl": "unc_dl.tif",
-    "prob_fused": "prob_fused.tif",
-    "mask_final": "mask_final.tif",
-    "samples_train": "samples_train.json",
-    "samples_val": "samples_val.json",
-    "metrics_val": "metrics_val.json",
-    "rl_history": "rl_history.json",
-    "feature_feedback": "feature_feedback.json",
-    "closed_loop_summary": "closed_loop_summary.json",
-}
 
-REQUIRED_FUSION_GRID_KEYS = (
-    "lambda_spec",
-    "lambda_tex",
-    "threshold",
-)
-
-REQUIRED_FUSION_FIXED_PARAM_KEYS = (
-    "lambda_spec",
-    "lambda_tex",
-    "threshold",
-    "min_area_m2",
-    "morph_kernel",
-    "shadow_penalty",
-)
+def _copy_json_if_exists(src: str, dst: str) -> None:
+    """Copy ``src`` JSON to ``dst`` (pretty-printed) when ``src`` exists."""
+    if not os.path.exists(src):
+        return
+    with open(src, encoding="utf-8") as f:
+        obj = json.load(f)
+    with open(dst, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
-def load_cfg(path: str) -> dict[str, Any]:
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+def _require_json_copy(src: str, dst: str, label: str) -> None:
+    """Copy ``src`` JSON to ``dst`` (pretty-printed); error if ``src`` missing."""
+    if not os.path.exists(src):
+        raise ValueError(f"Missing {label}: {src}")
+    with open(src, encoding="utf-8") as f:
+        obj = json.load(f)
+    with open(dst, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
-def ensure_work(cfg: dict[str, Any]) -> str:
-    work = cfg["work_dir"]
-    os.makedirs(work, exist_ok=True)
-    os.makedirs(os.path.join(work, "checkpoints"), exist_ok=True)
-    return work
+def _snapshot_required_json(src: str, dst: str, label: str) -> None:
+    """Snapshot wrapper around :func:`_require_json_copy`."""
+    _require_json_copy(src, dst, label)
 
 
-def wf(work_dir: str, key: str) -> str:
-    return os.path.join(work_dir, WORK_FILES[key])
+def _copy_file_if_exists(src: str, dst: str) -> None:
+    """Byte-copy ``src`` to ``dst`` when ``src`` exists."""
+    if not os.path.exists(src):
+        return
+    shutil.copyfile(src, dst)
 
 
-def _log_progress(message: str) -> None:
-    print(f"[progress] {message}", file=sys.stderr, flush=True)
+def _require_file_copy(src: str, dst: str, label: str) -> None:
+    """Byte-copy ``src`` to ``dst``; error if ``src`` missing."""
+    if not os.path.exists(src):
+        raise ValueError(f"Missing {label}: {src}")
+    shutil.copyfile(src, dst)
 
 
-def _require_existing_path(path: str, label: str) -> str:
-    if not path:
-        raise ValueError(f"缺少 {label} 配置。")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"{label} 不存在：{path}")
-    return path
+def _snapshot_required_file(src: str, dst: str, label: str) -> None:
+    """Snapshot wrapper around :func:`_require_file_copy`."""
+    _require_file_copy(src, dst, label)
 
 
-def _ensure_directory_writable(path: str, label: str) -> str:
-    if not path:
-        raise ValueError(f"缺少 {label} 配置。")
-    os.makedirs(path, exist_ok=True)
-    if not os.path.isdir(path):
-        raise NotADirectoryError(f"{label} 不是目录：{path}")
-    probe_path: str | None = None
+def _restore_outputs_atomically(entries: list[tuple[str, str, str, str]]) -> list[str]:
+    """Atomically restore a batch of artifacts via stage + backup + ``os.replace``.
+
+    ``entries`` is a list of ``(src, dst, label, kind)`` tuples where
+    ``kind`` is ``"json"`` (use :func:`_require_json_copy`) or anything
+    else (use :func:`_require_file_copy`).
+
+    Lives in :mod:`forestseg.cli` rather than :mod:`forestseg._artifacts`
+    so the test suite's ``monkeypatch.setattr("forestseg.cli._require_*", ...)``
+    hooks reach the actual call sites — the helpers are looked up in
+    this module's globals at call time.
+    """
+    if not entries:
+        return []
+    work_dir = os.path.dirname(entries[0][1]) or None
+    stage_dir = tempfile.mkdtemp(prefix="restore_best_round_", dir=work_dir)
+    backup_dir = tempfile.mkdtemp(prefix="restore_best_round_backup_", dir=work_dir)
+    staged_paths: list[tuple[str, str, str]] = []
+    replaced_paths: list[tuple[str, str, bool]] = []
+    restored_labels: list[str] = []
     try:
-        with tempfile.NamedTemporaryFile(dir=path, prefix=".preflight-write-", suffix=".tmp", delete=False) as probe:
-            probe_path = probe.name
-    except OSError as exc:
-        raise PermissionError(f"{label} 不可写：{path}") from exc
+        try:
+            for index, (src, dst, label, kind) in enumerate(entries):
+                staged_path = os.path.join(stage_dir, f"{index:02d}_{os.path.basename(dst)}")
+                if kind == "json":
+                    _require_json_copy(src, staged_path, label)
+                else:
+                    _require_file_copy(src, staged_path, label)
+                staged_paths.append((staged_path, dst, label))
+        except Exception as exc:
+            raise RestoreOutputsError(str(exc), restored_labels=restored_labels, failed_label=label) from exc
+        try:
+            for staged_path, dst, label in staged_paths:
+                existed = os.path.exists(dst)
+                backup_path = os.path.join(backup_dir, os.path.basename(dst))
+                if existed:
+                    shutil.copyfile(dst, backup_path)
+                replaced_paths.append((backup_path, dst, existed))
+                os.replace(staged_path, dst)
+                restored_labels.append(label)
+        except Exception as exc:
+            for backup_path, dst, existed in reversed(replaced_paths):
+                if existed and os.path.exists(backup_path):
+                    shutil.copyfile(backup_path, dst)
+                elif not existed and os.path.exists(dst):
+                    os.remove(dst)
+            raise RestoreOutputsError(str(exc), restored_labels=restored_labels, failed_label=label) from exc
+        return restored_labels
     finally:
-        if probe_path and os.path.exists(probe_path):
-            try:
-                os.remove(probe_path)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                pass
-    return path
-
-
-def _resolve_fusion_stage(cfg: dict[str, Any], stage_override: int | None = None) -> int:
-    raw_value = stage_override if stage_override is not None else cfg.get("fusion", {}).get("stage", 1)
-    return _validate_stage_int(raw_value, "fusion.stage")
-
-
-def _validate_fusion_config(
-    cfg: dict[str, Any], *, stage_override: int | None = None
-) -> tuple[int, dict[str, Any], dict[str, list[Any]], list[str]]:
-    fcfg = cfg.get("fusion", {})
-    fusion_stage = _resolve_fusion_stage(cfg, stage_override=stage_override)
-    fixed_params = fcfg.get("fixed_params", {})
-    grid_params = fcfg.get("grid", {})
-    if fusion_stage == 0:
-        fixed_params = _validate_fusion_params(fixed_params, label_prefix="fusion.fixed_params")
-        grid_keys = sorted(grid_params.keys()) if isinstance(grid_params, dict) else []
-        return fusion_stage, fixed_params, {}, grid_keys
-    if not isinstance(grid_params, dict) or not grid_params:
-        raise ValueError("fusion.grid 不能为空，且必须为参数网格字典。")
-    missing_grid_keys = [key for key in REQUIRED_FUSION_GRID_KEYS if key not in grid_params]
-    if missing_grid_keys:
-        raise ValueError(f"fusion.grid 缺少必需参数：{', '.join(missing_grid_keys)}。")
-    grid_params = _validate_fusion_param_candidates(grid_params, label_prefix="fusion.grid")
-    fixed_params = _validate_fusion_params(fixed_params, label_prefix="fusion.fixed_params")
-    return fusion_stage, fixed_params, grid_params, sorted(grid_params.keys())
-
-
-def _resolve_bandit_config(loop_cfg: dict[str, Any]) -> dict[str, Any]:
-    bandit_cfg = loop_cfg.get("bandit", {})
-    if bandit_cfg is None:
-        bandit_cfg = {}
-    if not isinstance(bandit_cfg, dict):
-        raise ValueError("rl_loop.bandit 必须为对象配置。")
-    enabled = _validate_bool(bandit_cfg.get("enabled", True), "rl_loop.bandit.enabled")
-    epsilon = _validate_unit_interval(bandit_cfg.get("epsilon", 0.2), "rl_loop.bandit.epsilon")
-    min_epsilon = _validate_unit_interval(bandit_cfg.get("min_epsilon", 0.05), "rl_loop.bandit.min_epsilon")
-    epsilon_decay = _validate_unit_interval(bandit_cfg.get("epsilon_decay", 0.95), "rl_loop.bandit.epsilon_decay")
-    alpha = _validate_unit_interval(bandit_cfg.get("alpha", 0.3), "rl_loop.bandit.alpha")
-    seed = _validate_positive_int(bandit_cfg.get("seed", 42), "rl_loop.bandit.seed")
-    if min_epsilon > epsilon:
-        raise ValueError("rl_loop.bandit.min_epsilon 不能大于 rl_loop.bandit.epsilon。")
-    return {
-        "enabled": enabled,
-        "epsilon": epsilon,
-        "min_epsilon": min_epsilon,
-        "epsilon_decay": epsilon_decay,
-        "alpha": alpha,
-        "seed": seed,
-    }
-
-
-def _validate_fusion_param_value(value: Any, label: str, key: str) -> Any:
-    if key in {"lambda_spec", "lambda_tex", "threshold", "shadow_penalty"}:
-        return _validate_unit_interval(value, label)
-    if key == "min_area_m2":
-        return _validate_positive_float(value, label)
-    if key == "morph_kernel":
-        return _validate_positive_int(value, label)
-    raise ValueError(f"未知 fusion 参数：{label}。")
-
-
-def _validate_fusion_params(params: dict[str, Any], *, label_prefix: str) -> dict[str, Any]:
-    if not isinstance(params, dict) or not params:
-        raise ValueError(f"{label_prefix} 不能为空，且必须为参数字典。")
-    missing_keys = [key for key in REQUIRED_FUSION_FIXED_PARAM_KEYS if key not in params]
-    if missing_keys:
-        raise ValueError(f"{label_prefix} 缺少必需参数：{', '.join(missing_keys)}。")
-    return {
-        key: _validate_fusion_param_value(params.get(key), f"{label_prefix}.{key}", key)
-        for key in REQUIRED_FUSION_FIXED_PARAM_KEYS
-    }
-
-
-def _validate_fusion_param_candidates(grid_params: dict[str, Any], *, label_prefix: str) -> dict[str, list[Any]]:
-    normalized: dict[str, list[Any]] = {}
-    for key, values in grid_params.items():
-        if key not in REQUIRED_FUSION_FIXED_PARAM_KEYS:
-            raise ValueError(f"未知 fusion 参数：{label_prefix}.{key}。")
-        if not isinstance(values, (list, tuple)) or not values:
-            raise ValueError(f"{label_prefix}.{key} 参数候选不能为空列表。")
-        normalized[key] = [
-            _validate_fusion_param_value(candidate, f"{label_prefix}.{key}[{idx}]", key)
-            for idx, candidate in enumerate(values)
-        ]
-    return normalized
-
-
-def _resolve_label_paths(lcfg: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-    positive_path = str(lcfg.get("positive_path") or "").strip() or None
-    negative_path = str(lcfg.get("negative_path") or "").strip() or None
-    single_path = str(lcfg.get("path") or "").strip() or None
-    return positive_path, negative_path, single_path
-
-
-def _resolve_label_mode(lcfg: dict[str, Any]) -> tuple[str | None, str | None, str | None, str]:
-    positive_path, negative_path, single_path = _resolve_label_paths(lcfg)
-    if positive_path and negative_path:
-        return positive_path, negative_path, single_path, "dual"
-    if positive_path or negative_path:
-        raise ValueError("labels.positive_path 与 labels.negative_path 必须同时配置，不能只配置一个。")
-    if single_path:
-        return positive_path, negative_path, single_path, "legacy"
-    raise ValueError("缺少 labels.positive_path + labels.negative_path（或兼容字段 labels.path）配置。")
-
-
-def _require_labels_for_preflight(lcfg: dict[str, Any]) -> dict[str, str]:
-    positive_path, negative_path, single_path, mode = _resolve_label_mode(lcfg)
-    if mode == "dual":
-        return {
-            "labels_positive_path": _require_existing_path(str(positive_path), "labels.positive_path"),
-            "labels_negative_path": _require_existing_path(str(negative_path), "labels.negative_path"),
-        }
-    return {
-        "labels_path": _require_existing_path(str(single_path), "labels.path"),
-    }
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -621,159 +566,6 @@ def cmd_check_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     return {"report_path": report_path, **report}
-
-
-def _round_artifact_paths(work: str, round_index: int) -> dict[str, str]:
-    round_dir = os.path.join(work, "rounds", f"round_{round_index:02d}")
-    os.makedirs(round_dir, exist_ok=True)
-    fusion_selected_path = os.path.join(round_dir, "fusion_selected.json")
-    return {
-        "dir": round_dir,
-        "feature_meta": os.path.join(round_dir, "feature_stack_meta.json"),
-        "train_metrics": os.path.join(round_dir, "train_metrics.json"),
-        "metrics_val": os.path.join(round_dir, "metrics_val.json"),
-        "rl_payload": fusion_selected_path,
-        "fusion_selected": fusion_selected_path,
-        "feature_feedback": os.path.join(round_dir, "feature_feedback.json"),
-        "prob_dl": os.path.join(round_dir, "prob_dl.tif"),
-        "unc_dl": os.path.join(round_dir, "unc_dl.tif"),
-        "prob_fused": os.path.join(round_dir, "prob_fused.tif"),
-    }
-
-
-def _copy_json_if_exists(src: str, dst: str) -> None:
-    if not os.path.exists(src):
-        return
-    with open(src, encoding="utf-8") as f:
-        obj = json.load(f)
-    with open(dst, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-
-
-def _require_json_copy(src: str, dst: str, label: str) -> None:
-    if not os.path.exists(src):
-        raise ValueError(f"Missing {label}: {src}")
-    with open(src, encoding="utf-8") as f:
-        obj = json.load(f)
-    with open(dst, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-
-
-def _snapshot_required_json(src: str, dst: str, label: str) -> None:
-    _require_json_copy(src, dst, label)
-
-
-def _copy_file_if_exists(src: str, dst: str) -> None:
-    if not os.path.exists(src):
-        return
-    shutil.copyfile(src, dst)
-
-
-def _require_file_copy(src: str, dst: str, label: str) -> None:
-    if not os.path.exists(src):
-        raise ValueError(f"Missing {label}: {src}")
-    shutil.copyfile(src, dst)
-
-
-def _snapshot_required_file(src: str, dst: str, label: str) -> None:
-    _require_file_copy(src, dst, label)
-
-
-class RestoreOutputsError(Exception):
-    def __init__(self, message: str, *, restored_labels: list[str], failed_label: str | None):
-        super().__init__(message)
-        self.restored_labels = list(restored_labels)
-        self.failed_label = failed_label
-
-
-def _restore_outputs_atomically(entries: list[tuple[str, str, str, str]]) -> list[str]:
-    if not entries:
-        return []
-    work_dir = os.path.dirname(entries[0][1]) or None
-    stage_dir = tempfile.mkdtemp(prefix="restore_best_round_", dir=work_dir)
-    backup_dir = tempfile.mkdtemp(prefix="restore_best_round_backup_", dir=work_dir)
-    staged_paths: list[tuple[str, str, str]] = []
-    replaced_paths: list[tuple[str, str, bool]] = []
-    restored_labels: list[str] = []
-    try:
-        try:
-            for index, (src, dst, label, kind) in enumerate(entries):
-                staged_path = os.path.join(stage_dir, f"{index:02d}_{os.path.basename(dst)}")
-                if kind == "json":
-                    _require_json_copy(src, staged_path, label)
-                else:
-                    _require_file_copy(src, staged_path, label)
-                staged_paths.append((staged_path, dst, label))
-        except Exception as exc:
-            raise RestoreOutputsError(str(exc), restored_labels=restored_labels, failed_label=label) from exc
-        try:
-            for staged_path, dst, label in staged_paths:
-                existed = os.path.exists(dst)
-                backup_path = os.path.join(backup_dir, os.path.basename(dst))
-                if existed:
-                    shutil.copyfile(dst, backup_path)
-                replaced_paths.append((backup_path, dst, existed))
-                os.replace(staged_path, dst)
-                restored_labels.append(label)
-        except Exception as exc:
-            for backup_path, dst, existed in reversed(replaced_paths):
-                if existed and os.path.exists(backup_path):
-                    shutil.copyfile(backup_path, dst)
-                elif not existed and os.path.exists(dst):
-                    os.remove(dst)
-            raise RestoreOutputsError(str(exc), restored_labels=restored_labels, failed_label=label) from exc
-        return restored_labels
-    finally:
-        shutil.rmtree(stage_dir, ignore_errors=True)
-        shutil.rmtree(backup_dir, ignore_errors=True)
-
-
-def _optional_restore_outcome(
-    optional_labels: list[str], restored_labels: list[str], failed_labels: list[str]
-) -> dict[str, list[str]]:
-    restored_optional_artifacts = [label for label in optional_labels if label in restored_labels]
-    failed_optional_artifacts = [label for label in optional_labels if label in failed_labels]
-    skipped_optional_artifacts = [
-        label for label in optional_labels if label not in restored_labels and label not in failed_labels
-    ]
-    return {
-        "restored_optional_artifacts": restored_optional_artifacts,
-        "failed_optional_artifacts": failed_optional_artifacts,
-        "skipped_optional_artifacts": skipped_optional_artifacts,
-    }
-
-
-def _feature_feedback_transforms(work: str) -> list[dict[str, Any] | None]:
-    feedback_path = wf(work, "feature_feedback")
-    if not os.path.exists(feedback_path):
-        return [None, None, None, None]
-    with open(feedback_path, encoding="utf-8") as f:
-        feedback = json.load(f)
-    spec_threshold = float(feedback.get("threshold", 0.5))
-    lambda_spec = float(feedback.get("lambda_spec", 0.2))
-    lambda_tex = float(feedback.get("lambda_tex", 0.2))
-    reward = float(feedback.get("reward", 0.0))
-    reward_gain = min(max(reward / 3.0, 0.0), 1.0)
-    return [
-        None,
-        {
-            "scale": max(lambda_spec, 1e-3) / 0.2,
-            "offset": 0.05 * reward_gain,
-            "gamma": max(0.7, 1.1 - 0.2 * reward_gain),
-            "threshold": spec_threshold,
-            "below_scale": 0.5,
-            "above_scale": 1.0 + 0.15 * reward_gain,
-        },
-        {
-            "scale": max(lambda_tex, 1e-3) / 0.2,
-            "offset": 0.05 * reward_gain,
-            "gamma": max(0.7, 1.1 - 0.2 * reward_gain),
-            "threshold": spec_threshold,
-            "below_scale": 0.5,
-            "above_scale": 1.0 + 0.15 * reward_gain,
-        },
-        None,
-    ]
 
 
 def cmd_build_feature_stack(cfg: dict[str, Any]) -> dict[str, Any]:

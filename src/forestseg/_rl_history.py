@@ -31,6 +31,17 @@ from ._validators import (
     _validate_unit_interval,
 )
 
+__all__ = [
+    "LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS",
+    "VALID_RL_SELECTION_METRICS",
+    "VALID_TRAIN_SELECTION_METRICS",
+    "_history_entry",
+    "_load_rl_history",
+    "_normalize_legacy_rl_history_entry",
+    "_rewrite_latest_rl_history_entry",
+    "_validate_rl_history_entry",
+]
+
 VALID_TRAIN_SELECTION_METRICS = {"accuracy", "precision", "recall", "f1", "iou"}
 VALID_RL_SELECTION_METRICS = {"reward", *VALID_TRAIN_SELECTION_METRICS}
 
