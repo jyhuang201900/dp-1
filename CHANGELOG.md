@@ -7,6 +7,28 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- CI lint job: sort imports in `tests/test_public_api.py` so `ruff check` passes.
+- CI test job: three `test_cmd_run_rl_fusion_*` tests no longer regress.
+  - `_validate_rl_history_entry` now rejects empty-dict entries (`[{}]`) at
+    load time rather than silently filling in legacy defaults; the empty
+    dict carries no information and was always meant to be invalid.
+  - The `_write_basic_rl_fusion_inputs` test helper now also seeds
+    `input_prepared.tif` so the `cmd_run_rl_fusion` lazy-build branch is
+    short-circuited the same way it is for the other intermediate inputs.
+
+### Added
+
+- PEP 561 `py.typed` marker so downstream consumers pick up type hints.
+- CI now also runs on pushes to `refactor/**` branches, not just `main`.
+
+### Changed
+
+- Bump `ruff-pre-commit` to `v0.15.12` so the pinned hook understands
+  the `RUF043` selector already used in `pyproject.toml`.
+- `configs/pipeline.windows.yaml`: trim trailing blank line (end-of-file-fixer).
+
 ## [0.2.0] — 2025-05-12 — `dp-1` refactor
 
 This release marks the migration from

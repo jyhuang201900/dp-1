@@ -79,6 +79,9 @@ path = "src/forestseg/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/forestseg"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/forestseg/py.typed" = "forestseg/py.typed"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "src/forestseg",

@@ -950,6 +950,8 @@ def _normalize_legacy_rl_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
 def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None = None) -> dict[str, Any]:
     if not isinstance(entry, dict):
         raise ValueError(f"Invalid rl_history entries: {history_path}")
+    if not entry:
+        raise ValueError(f"Invalid rl_history entries: {history_path}")
     normalized_entry = _normalize_legacy_rl_history_entry(entry)
     normalized_entry["selection_metric"] = _validate_choice(
         normalized_entry.get("selection_metric"), "rl_history.selection_metric", VALID_RL_SELECTION_METRICS

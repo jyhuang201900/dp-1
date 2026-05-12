@@ -326,6 +326,7 @@ def _write_basic_rl_fusion_inputs(work_dir: Path, *, include_prob_dl: bool = Tru
         keys.insert(2, "prob_dl")
     for key in keys:
         (work_dir / f"{key}.tif").write_text("placeholder", encoding="utf-8")
+    (work_dir / "input_prepared.tif").write_text("placeholder", encoding="utf-8")
     (work_dir / "samples_val.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
 
 
