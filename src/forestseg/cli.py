@@ -229,6 +229,18 @@ def _restore_outputs_atomically(entries: list[tuple[str, str, str, str]]) -> lis
         shutil.rmtree(backup_dir, ignore_errors=True)
 
 
+def _with_stage_override(cfg: dict[str, Any], stage_override: int | None) -> dict[str, Any]:
+    """Return ``cfg`` (unchanged) or a shallow copy with ``fusion.stage`` set.
+
+    Centralises the ``--stage`` override pattern shared by
+    :func:`cmd_preflight_check`, :func:`cmd_run_closed_loop`,
+    :func:`cmd_run_all`, and :func:`main`.
+    """
+    if stage_override is None:
+        return cfg
+    return {**cfg, "fusion": {**cfg.get("fusion", {}), "stage": stage_override}}
+
+
 def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
     work = ensure_work(cfg)
     lcfg = cfg.get("labels", {})
@@ -963,9 +975,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
     loop_stopped_early = False
 
     try:
-        preflight = cmd_preflight_check(
-            cfg if stage_override is None else {**cfg, "fusion": {**cfg.get("fusion", {}), "stage": stage_override}}
-        )
+        preflight = cmd_preflight_check(_with_stage_override(cfg, stage_override))
         loop_cfg = cfg.get("rl_loop", {})
         rounds = _validate_positive_int(loop_cfg.get("rounds", 2), "rl_loop.rounds")
         patience = _validate_positive_int(loop_cfg.get("patience", 2), "rl_loop.patience")
@@ -1144,9 +1154,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
 
 def cmd_run_all(cfg: dict[str, Any], force_train: bool = False, stage_override: int | None = None) -> dict[str, Any]:
     _log_progress("run-all: preflight-check")
-    cmd_preflight_check(
-        cfg if stage_override is None else {**cfg, "fusion": {**cfg.get("fusion", {}), "stage": stage_override}}
-    )
+    cmd_preflight_check(_with_stage_override(cfg, stage_override))
     _log_progress("run-all: prepare-input")
     cmd_prepare_input(cfg)
     _log_progress("run-all: build-spec-tex")
@@ -1200,9 +1208,7 @@ def main() -> None:
     elif args.command == "check-label-points":
         out = cmd_check_label_points(cfg)
     elif args.command == "preflight-check":
-        out = cmd_preflight_check(
-            cfg if args.stage is None else {**cfg, "fusion": {**cfg.get("fusion", {}), "stage": args.stage}}
-        )
+        out = cmd_preflight_check(_with_stage_override(cfg, args.stage))
     elif args.command == "prepare-label-points":
         out = cmd_prepare_label_points(cfg)
     elif args.command == "build-feature-stack":
