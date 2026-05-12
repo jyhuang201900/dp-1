@@ -73,6 +73,12 @@ from ._paths import (
     ensure_work,
     load_cfg,
 )
+from ._preflight import (
+    resolve_dl_preflight,
+    resolve_input_preflight,
+    resolve_labels_preflight,
+    resolve_rl_loop_preflight,
+)
 from ._rl_history import (
     LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS as LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS,
     VALID_RL_SELECTION_METRICS,
@@ -86,10 +92,10 @@ from ._validators import (
     _validate_bool,
     _validate_choice,
     _validate_non_negative_float,
-    _validate_non_negative_int,
-    _validate_positive_float,
+    _validate_non_negative_int as _validate_non_negative_int,
+    _validate_positive_float as _validate_positive_float,
     _validate_positive_int,
-    _validate_ratio,
+    _validate_ratio as _validate_ratio,
     _validate_stage_int as _validate_stage_int,
     _validate_unit_interval,
 )
@@ -241,6 +247,9 @@ def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
     Reads ``labels`` / ``dl`` / ``dem`` / ``rl_loop`` / ``fusion`` sections,
     checks every required path exists, probes work-dir writability, and
     returns a ``preflight`` block embedded in the closed-loop summary.
+    Per-section scalar validation lives in :mod:`forestseg._preflight`;
+    this function focuses on path checks + ``warnings`` accumulation
+    + the final report shape.
     """
     work = ensure_work(cfg)
     lcfg = cfg.get("labels", {})
@@ -249,54 +258,25 @@ def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
     loop_cfg = cfg.get("rl_loop", {})
     inp_cfg = cfg.get("input", {})
     checkpoint_path = str(dcfg.get("checkpoint_path") or os.path.join(work, "checkpoints", "best.pt"))
-    checkpoint_dir = os.path.dirname(checkpoint_path) or work
     checks = {
         "scene_sh": _require_existing_path(str(cfg.get("scene_sh") or ""), "scene_sh"),
         "work_dir": work,
-        "checkpoint_dir": checkpoint_dir,
+        "checkpoint_dir": _ensure_directory_writable(
+            os.path.dirname(checkpoint_path) or work, "dl.checkpoint_path 所在目录"
+        ),
     }
     checks.update(_require_labels_for_preflight(lcfg))
-    checks["checkpoint_dir"] = _ensure_directory_writable(checks["checkpoint_dir"], "dl.checkpoint_path 所在目录")
-    split_ratio = _validate_ratio(lcfg.get("split_ratio", 0.7), "labels.split_ratio")
-    split_seed = _validate_non_negative_int(lcfg.get("split_seed", 42), "labels.split_seed")
-    prefer_v1 = _validate_bool(inp_cfg.get("prefer_v1", True), "input.prefer_v1")
-    fallback_quick = _validate_bool(inp_cfg.get("fallback_quick", True), "input.fallback_quick")
-    class_field = str(lcfg.get("class_field", "class")).strip()
-    positive_value = str(lcfg.get("positive_value", "1")).strip()
-    negative_value = str(lcfg.get("negative_value", "0")).strip()
-    if not class_field:
-        raise ValueError("labels.class_field 不能为空。")
-    if positive_value.lower() == negative_value.lower():
-        raise ValueError("labels.positive_value 和 labels.negative_value 不能相同。")
-    grid_size = _validate_positive_float(lcfg.get("grid_size", 1000.0), "labels.grid_size")
-    tile_size = _validate_positive_int(dcfg.get("tile_size", 512), "dl.tile_size")
-    stride = _validate_positive_int(dcfg.get("stride", 384), "dl.stride")
-    batch_size = _validate_positive_int(dcfg.get("batch_size", 8), "dl.batch_size")
-    epochs = _validate_positive_int(dcfg.get("epochs", 8), "dl.epochs")
-    mc_dropout_passes = _validate_positive_int(dcfg.get("mc_dropout_passes", 4), "dl.mc_dropout_passes")
-    sample_tile_size = _validate_positive_int(
-        dcfg.get("sample_tile_size", dcfg.get("tile_size", 512)), "dl.sample_tile_size"
-    )
-    max_patches = _validate_positive_int(dcfg.get("max_patches", 2500), "dl.max_patches")
-    aux_warmup_epochs = _validate_non_negative_int(dcfg.get("aux_warmup_epochs", 0), "dl.aux_warmup_epochs")
-    if stride > tile_size:
-        raise ValueError(f"dl.stride 不能大于 dl.tile_size，当前为 {stride} > {tile_size}。")
-    rounds = _validate_positive_int(loop_cfg.get("rounds", 2), "rl_loop.rounds")
-    patience = _validate_positive_int(loop_cfg.get("patience", 2), "rl_loop.patience")
-    min_delta = _validate_non_negative_float(loop_cfg.get("min_delta", 0.001), "rl_loop.min_delta")
-    dl_selection_metric = _validate_choice(
-        dcfg.get("selection_metric", "f1"), "dl.selection_metric", VALID_TRAIN_SELECTION_METRICS
-    )
-    rl_selection_metric = _validate_choice(
-        loop_cfg.get("selection_metric", "reward"), "rl_loop.selection_metric", VALID_RL_SELECTION_METRICS
-    )
-    bandit_config = _resolve_bandit_config(loop_cfg)
-    val_threshold = _validate_unit_interval(dcfg.get("val_threshold", 0.5), "dl.val_threshold")
+
+    labels_pf = resolve_labels_preflight(lcfg)
+    dl_pf = resolve_dl_preflight(dcfg)
+    rl_loop_pf = resolve_rl_loop_preflight(loop_cfg)
+    input_pf = resolve_input_preflight(inp_cfg)
     fusion_stage, fixed_params, _, grid_keys = _validate_fusion_config(cfg)
+
     scene = resolve_scene_input(
         scene_sh=str(cfg.get("scene_sh") or ""),
-        prefer_v1=prefer_v1,
-        fallback_quick=fallback_quick,
+        prefer_v1=input_pf.prefer_v1,
+        fallback_quick=input_pf.fallback_quick,
     )
     checks["input_tif"] = scene.input_tif
     checks["generated_export_dir"] = _ensure_directory_writable(
@@ -305,10 +285,11 @@ def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
     dem_path = dem_cfg.get("path")
     if dem_path:
         checks["dem_path"] = _require_existing_path(str(dem_path), "dem.path")
+
     warnings: list[str] = []
-    if rounds == 1:
+    if rl_loop_pf.rounds == 1:
         warnings.append("rl_loop.rounds=1，将不会形成多轮闭环优化。")
-    if patience > rounds:
+    if rl_loop_pf.patience > rl_loop_pf.rounds:
         warnings.append("rl_loop.patience 大于 rounds，早停阈值实际上不会触发。")
     report = {
         "schema_version": 2,
@@ -319,34 +300,9 @@ def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "checks": checks,
         "config": {
-            "labels": {
-                "layer": lcfg.get("layer"),
-                "class_field": class_field,
-                "positive_value": positive_value,
-                "negative_value": negative_value,
-                "split_ratio": split_ratio,
-                "grid_size": grid_size,
-                "split_seed": split_seed,
-            },
-            "dl": {
-                "tile_size": tile_size,
-                "stride": stride,
-                "batch_size": batch_size,
-                "epochs": epochs,
-                "mc_dropout_passes": mc_dropout_passes,
-                "sample_tile_size": sample_tile_size,
-                "max_patches": max_patches,
-                "aux_warmup_epochs": aux_warmup_epochs,
-                "val_threshold": val_threshold,
-                "selection_metric": dl_selection_metric,
-            },
-            "rl_loop": {
-                "rounds": rounds,
-                "patience": patience,
-                "min_delta": min_delta,
-                "selection_metric": rl_selection_metric,
-                "bandit": bandit_config,
-            },
+            "labels": labels_pf.as_report(),
+            "dl": dl_pf.as_report(),
+            "rl_loop": rl_loop_pf.as_report(),
             "fusion": {
                 "stage": fusion_stage,
                 "grid_keys": grid_keys,
