@@ -58,6 +58,7 @@ from ._fusion_config import (
     _validate_fusion_param_value as _validate_fusion_param_value,
     _validate_fusion_params as _validate_fusion_params,
 )
+from ._io import atomic_write_json as _atomic_write_json, read_json as _read_json, write_json as _write_json
 from ._label_resolution import (
     LabelGeometry,
     LabelSpec,
@@ -133,23 +134,17 @@ from .train import train_supervised_model
 
 
 def _copy_json_if_exists(src: str, dst: str) -> None:
-    """Copy ``src`` JSON to ``dst`` (pretty-printed) when ``src`` exists."""
+    """Copy ``src`` JSON to ``dst`` (pretty-printed, atomic) when ``src`` exists."""
     if not os.path.exists(src):
         return
-    with open(src, encoding="utf-8") as f:
-        obj = json.load(f)
-    with open(dst, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(dst, _read_json(src))
 
 
 def _require_json_copy(src: str, dst: str, label: str) -> None:
-    """Copy ``src`` JSON to ``dst`` (pretty-printed); error if ``src`` missing."""
+    """Copy ``src`` JSON to ``dst`` (pretty-printed, atomic); error if ``src`` missing."""
     if not os.path.exists(src):
         raise ValueError(f"Missing {label}: {src}")
-    with open(src, encoding="utf-8") as f:
-        obj = json.load(f)
-    with open(dst, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(dst, _read_json(src))
 
 
 def _snapshot_required_json(src: str, dst: str, label: str) -> None:
@@ -311,8 +306,7 @@ def cmd_preflight_check(cfg: dict[str, Any]) -> dict[str, Any]:
         },
     }
     report_path = os.path.join(work, "preflight_check.json")
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+    _write_json(report_path, report)
     return {"report_path": report_path, **report}
 
 
@@ -336,8 +330,7 @@ def cmd_prepare_input(cfg: dict[str, Any]) -> dict[str, Any]:
         "prepared_tif": out_path,
         "normalize_stats": stats,
     }
-    with open(os.path.join(work, "scene_meta.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    _write_json(os.path.join(work, "scene_meta.json"), meta)
     return meta
 
 
@@ -559,8 +552,7 @@ def cmd_check_label_points(cfg: dict[str, Any]) -> dict[str, Any]:
     report["warnings"] = list(risk.get("warnings") or [])
     report["errors"] = list(risk.get("blocking") or [])
     report_path = os.path.join(work, "label_check_report.json")
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+    _write_json(report_path, report)
     return {"report_path": report_path, **report}
 
 
@@ -700,21 +692,18 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
 
     bandit.record_reward(float(validation_reward.get("reward", 0.0)))
 
-    with open(wf(work, "feature_feedback"), "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "lambda_spec": selected.lambda_spec,
-                "lambda_tex": selected.lambda_tex,
-                "threshold": selected.threshold,
-                "min_area_m2": selected.min_area_m2,
-                "morph_kernel": selected.morph_kernel,
-                "shadow_penalty": selected.shadow_penalty,
-                "reward": validation_reward.get("reward", 0.0),
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+    _atomic_write_json(
+        wf(work, "feature_feedback"),
+        {
+            "lambda_spec": selected.lambda_spec,
+            "lambda_tex": selected.lambda_tex,
+            "threshold": selected.threshold,
+            "min_area_m2": selected.min_area_m2,
+            "morph_kernel": selected.morph_kernel,
+            "shadow_penalty": selected.shadow_penalty,
+            "reward": validation_reward.get("reward", 0.0),
+        },
+    )
 
     def fusion_processor(prob_dl_arr: np.ndarray, prob_spec_arr: np.ndarray, prob_tex_arr: np.ndarray) -> np.ndarray:
         return fuse_probabilities(prob_dl_arr, prob_spec_arr, prob_tex_arr, selected)
@@ -734,7 +723,18 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
     if rl_selection_metric != "reward":
         if rl_selection_metric not in validation_reward:
             raise ValueError(f"rl_loop.selection_metric={rl_selection_metric} 未在 validation_reward 中找到可用分数。")
-        selected_score = validation_reward[rl_selection_metric]
+        candidate_score = validation_reward[rl_selection_metric]
+        try:
+            coerced_score = float(candidate_score)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"rl_loop.selection_metric={rl_selection_metric} 对应分数无法转为数值：{candidate_score!r}。"
+            ) from exc
+        if not np.isfinite(coerced_score):
+            raise ValueError(
+                f"rl_loop.selection_metric={rl_selection_metric} 对应分数不是有限数值：{candidate_score!r}。"
+            )
+        selected_score = coerced_score
     rl_payload = {
         "schema_version": 2,
         "round": None,
@@ -760,12 +760,10 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
     }
     history.append(rl_payload)
     for idx, entry in enumerate(history, start=1):
-        if isinstance(entry, dict) and not entry.get("round"):
+        if isinstance(entry, dict) and entry.get("round") is None:
             entry["round"] = idx
-    with open(os.path.join(work, "fusion_selected.json"), "w", encoding="utf-8") as f:
-        json.dump(rl_payload, f, ensure_ascii=False, indent=2)
-    with open(history_path, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(os.path.join(work, "fusion_selected.json"), rl_payload)
+    _atomic_write_json(history_path, history)
     return {
         "stage_used": stage_used,
         "params": rl_payload["params"],
@@ -777,28 +775,19 @@ def cmd_run_rl_fusion(cfg: dict[str, Any], stage_override: int | None = None) ->
 
 
 def _load_selected_params(work: str, cfg: dict[str, Any]) -> FusionParams:
-    p = os.path.join(work, "fusion_selected.json")
-    if os.path.exists(p):
-        with open(p, encoding="utf-8") as f:
+    """Return the :class:`FusionParams` to use for postprocess / export.
+
+    Prefers the already-selected payload at ``<work>/fusion_selected.json``
+    (written by ``run-rl-fusion``) and falls back to
+    ``cfg.fusion.fixed_params``. Missing fields in either source fall
+    through to :meth:`FusionParams.from_mapping`'s built-in defaults.
+    """
+    selected_path = os.path.join(work, "fusion_selected.json")
+    if os.path.exists(selected_path):
+        with open(selected_path, encoding="utf-8") as f:
             obj = json.load(f)
-        prm = obj.get("params", {})
-        return FusionParams(
-            lambda_spec=float(prm.get("lambda_spec", 0.2)),
-            lambda_tex=float(prm.get("lambda_tex", 0.2)),
-            threshold=float(prm.get("threshold", 0.5)),
-            min_area_m2=float(prm.get("min_area_m2", 200)),
-            morph_kernel=int(prm.get("morph_kernel", 3)),
-            shadow_penalty=float(prm.get("shadow_penalty", 0.5)),
-        )
-    fp = cfg.get("fusion", {}).get("fixed_params", {})
-    return FusionParams(
-        lambda_spec=float(fp.get("lambda_spec", 0.2)),
-        lambda_tex=float(fp.get("lambda_tex", 0.2)),
-        threshold=float(fp.get("threshold", 0.5)),
-        min_area_m2=float(fp.get("min_area_m2", 200)),
-        morph_kernel=int(fp.get("morph_kernel", 3)),
-        shadow_penalty=float(fp.get("shadow_penalty", 0.5)),
-    )
+        return FusionParams.from_mapping(obj.get("params"))
+    return FusionParams.from_mapping(cfg.get("fusion", {}).get("fixed_params", {}))
 
 
 def cmd_postprocess_export(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -872,11 +861,9 @@ def _persist_closed_loop_outputs(
     metrics_round_history: list[dict[str, Any]],
     summary: dict[str, Any],
 ) -> None:
-    """Write the per-round metrics history and the run summary to disk."""
-    with open(metrics_history_path, "w", encoding="utf-8") as f:
-        json.dump(metrics_round_history, f, ensure_ascii=False, indent=2)
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
+    """Write the per-round metrics history and the run summary to disk (atomic)."""
+    _atomic_write_json(metrics_history_path, metrics_round_history)
+    _atomic_write_json(summary_path, summary)
 
 
 def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) -> dict[str, Any]:
@@ -939,17 +926,14 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
             feature_meta_path = os.path.splitext(wf(work, "feature_stack"))[0] + "_meta.json"
             feature_meta: dict[str, Any] = {}
             if os.path.exists(feature_meta_path):
-                with open(feature_meta_path, encoding="utf-8") as f:
-                    feature_meta = json.load(f)
-                with open(round_paths["feature_meta"], "w", encoding="utf-8") as f:
-                    json.dump(feature_meta, f, ensure_ascii=False, indent=2)
+                feature_meta = _read_json(feature_meta_path)
+                _atomic_write_json(round_paths["feature_meta"], feature_meta)
 
             state.current_stage = "train_or_load_dl"
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} train-or-load-dl")
             train_out = cmd_train_or_load_dl(cfg, force_train=True)
             train_metrics = train_out.get("train_info", {}).get("metrics", {})
-            with open(round_paths["train_metrics"], "w", encoding="utf-8") as f:
-                json.dump(train_metrics, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(round_paths["train_metrics"], train_metrics)
 
             state.current_stage = "run_rl_fusion"
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} run-rl-fusion")
@@ -962,8 +946,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
             rl_payload["round"] = round_no
             rl_payload["selection_metric"] = selection_metric
             rl_payload["score"] = score
-            with open(rl_payload_path, "w", encoding="utf-8") as f:
-                json.dump(rl_payload, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(rl_payload_path, rl_payload)
             _rewrite_latest_rl_history_entry(wf(work, "rl_history"), round_no, selection_metric, score)
             feature_feedback_path = wf(work, "feature_feedback")
             state.current_stage = "snapshot_round_artifacts"

@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from ._io import atomic_write_json, read_json
 from ._rl_history_legacy import (
     LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS as LEGACY_RL_HISTORY_FUSION_PARAM_DEFAULTS,
     _normalize_legacy_rl_history_entry as _normalize_legacy_rl_history_entry,
@@ -45,18 +46,34 @@ VALID_TRAIN_SELECTION_METRICS = {"accuracy", "precision", "recall", "f1", "iou"}
 VALID_RL_SELECTION_METRICS = {"reward", *VALID_TRAIN_SELECTION_METRICS}
 
 
+def _entry_invalid(history_path: str, reason: str, index: int | None = None) -> ValueError:
+    """Build the canonical ``Invalid rl_history entries`` error.
+
+    The ``Invalid rl_history entries: <history_path>`` prefix is
+    preserved verbatim so callers and tests can keep matching it;
+    ``reason`` is appended after a colon for human debuggability,
+    and ``index`` (1-based) is included when the offending entry's
+    position is known.
+    """
+    suffix_parts: list[str] = []
+    if index is not None:
+        suffix_parts.append(f"entry #{index}")
+    suffix_parts.append(reason)
+    return ValueError(f"Invalid rl_history entries: {history_path}: {' — '.join(suffix_parts)}")
+
+
 def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None = None) -> dict[str, Any]:
     if not isinstance(entry, dict):
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(history_path, "entry must be an object", index=index)
     if not entry:
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(history_path, "entry must not be empty", index=index)
     normalized_entry = _normalize_legacy_rl_history_entry(entry)
     normalized_entry["selection_metric"] = _validate_choice(
         normalized_entry.get("selection_metric"), "rl_history.selection_metric", VALID_RL_SELECTION_METRICS
     )
     params = normalized_entry.get("params")
     if not isinstance(params, dict):
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(history_path, "params must be an object", index=index)
     normalized_entry["params"] = {
         "lambda_spec": _validate_unit_interval(params.get("lambda_spec"), "rl_history.params.lambda_spec"),
         "lambda_tex": _validate_unit_interval(params.get("lambda_tex"), "rl_history.params.lambda_tex"),
@@ -67,7 +84,7 @@ def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None 
     }
     validation_metrics = normalized_entry.get("validation_metrics")
     if not isinstance(validation_metrics, dict):
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(history_path, "validation_metrics must be an object", index=index)
     normalized_validation_metrics = dict(validation_metrics)
     reward_value = _validate_non_negative_float(
         normalized_validation_metrics.get("reward"), "rl_history.validation_metrics.reward"
@@ -77,20 +94,40 @@ def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None 
     if top_level_reward is not None:
         normalized_top_level_reward = _validate_non_negative_float(top_level_reward, "rl_history.reward")
         if not np.isclose(normalized_top_level_reward, reward_value):
-            raise ValueError(f"Invalid rl_history entries: {history_path}")
+            raise _entry_invalid(
+                history_path,
+                "top-level reward does not match validation_metrics.reward",
+                index=index,
+            )
         normalized_entry["reward"] = normalized_top_level_reward
     selected_metric = normalized_entry["selection_metric"]
     if selected_metric not in normalized_validation_metrics:
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(
+            history_path,
+            f"selection_metric={selected_metric!r} not present in validation_metrics",
+            index=index,
+        )
     selected_metric_value = normalized_validation_metrics.get(selected_metric)
     if isinstance(selected_metric_value, bool) or not isinstance(selected_metric_value, int | float | str):
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(
+            history_path,
+            f"validation_metrics[{selected_metric!r}] must be numeric",
+            index=index,
+        )
     try:
         parsed_selected_metric = float(selected_metric_value)
     except (TypeError, ValueError):
-        raise ValueError(f"Invalid rl_history entries: {history_path}") from None
+        raise _entry_invalid(
+            history_path,
+            f"validation_metrics[{selected_metric!r}] is not coercible to float",
+            index=index,
+        ) from None
     if not np.isfinite(parsed_selected_metric):
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(
+            history_path,
+            f"validation_metrics[{selected_metric!r}] is not finite",
+            index=index,
+        )
     normalized_validation_metrics[selected_metric] = parsed_selected_metric
     normalized_entry["validation_metrics"] = normalized_validation_metrics
     round_value = normalized_entry.get("round")
@@ -99,15 +136,19 @@ def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None 
     score_value = normalized_entry.get("score")
     if score_value is not None:
         if isinstance(score_value, bool):
-            raise ValueError(f"Invalid rl_history entries: {history_path}")
+            raise _entry_invalid(history_path, "score must be numeric, not bool", index=index)
         try:
             parsed_score = float(score_value)
         except (TypeError, ValueError):
-            raise ValueError(f"Invalid rl_history entries: {history_path}") from None
+            raise _entry_invalid(history_path, "score is not coercible to float", index=index) from None
         if not np.isfinite(parsed_score):
-            raise ValueError(f"Invalid rl_history entries: {history_path}")
+            raise _entry_invalid(history_path, "score is not finite", index=index)
         if not np.isclose(parsed_score, parsed_selected_metric):
-            raise ValueError(f"Invalid rl_history entries: {history_path}")
+            raise _entry_invalid(
+                history_path,
+                f"score does not match validation_metrics[{selected_metric!r}]",
+                index=index,
+            )
         normalized_entry["score"] = parsed_score
     if selected_metric == "reward":
         if (
@@ -115,12 +156,20 @@ def _validate_rl_history_entry(entry: Any, history_path: str, index: int | None 
             and top_level_reward is not None
             and not np.isclose(normalized_entry["score"], normalized_entry["reward"])
         ):
-            raise ValueError(f"Invalid rl_history entries: {history_path}")
+            raise _entry_invalid(
+                history_path,
+                "score and reward disagree for selection_metric='reward'",
+                index=index,
+            )
         if score_value is not None and not np.isclose(normalized_entry["score"], reward_value):
-            raise ValueError(f"Invalid rl_history entries: {history_path}")
+            raise _entry_invalid(
+                history_path,
+                "score does not match validation_metrics.reward for selection_metric='reward'",
+                index=index,
+            )
     train_metrics = normalized_entry.get("train_metrics")
     if train_metrics is not None and not isinstance(train_metrics, dict):
-        raise ValueError(f"Invalid rl_history entries: {history_path}")
+        raise _entry_invalid(history_path, "train_metrics must be an object when present", index=index)
     return normalized_entry
 
 
@@ -128,8 +177,7 @@ def _load_rl_history(history_path: str) -> list[dict[str, Any]]:
     if not os.path.exists(history_path):
         return []
     try:
-        with open(history_path, encoding="utf-8") as f:
-            loaded = json.load(f)
+        loaded = read_json(history_path)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid rl_history file: {history_path}") from exc
     if not isinstance(loaded, list):
@@ -146,5 +194,4 @@ def _rewrite_latest_rl_history_entry(history_path: str, round_no: int, selection
     latest_entry["selection_metric"] = selection_metric
     latest_entry["score"] = score
     history[-1] = _validate_rl_history_entry(latest_entry, history_path, index=len(history))
-    with open(history_path, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    atomic_write_json(history_path, history)

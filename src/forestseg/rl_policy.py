@@ -7,30 +7,20 @@ from typing import Any
 
 import numpy as np
 
+from ._constants import (
+    FUSION_POSTPROCESS_PARAM_KEYS,
+    REQUIRED_FUSION_FIXED_PARAM_KEYS,
+    REQUIRED_FUSION_GRID_KEYS,
+)
 from .fusion import FusionParams, fuse_probabilities, run_stage0, run_stage1_grid
 from .labels import sample_raster_at_points
 from .metrics import binary_metrics
 
-_REQUIRED_GRID_KEYS = (
-    "lambda_spec",
-    "lambda_tex",
-    "threshold",
-    "min_area_m2",
-    "morph_kernel",
-    "shadow_penalty",
-)
+_REQUIRED_GRID_KEYS = REQUIRED_FUSION_FIXED_PARAM_KEYS
 
-_POSTPROCESS_GRID_KEYS = (
-    "min_area_m2",
-    "morph_kernel",
-    "shadow_penalty",
-)
+_POSTPROCESS_GRID_KEYS = FUSION_POSTPROCESS_PARAM_KEYS
 
-_FUSION_GRID_KEYS = (
-    "lambda_spec",
-    "lambda_tex",
-    "threshold",
-)
+_FUSION_GRID_KEYS = REQUIRED_FUSION_GRID_KEYS
 
 
 def _validate_stage(stage: int) -> int:
@@ -129,13 +119,8 @@ def choose_fusion_by_validation(
         key: _resolve_grid_or_fixed_param(fixed_params, grid_params, key) for key in _FUSION_GRID_KEYS
     }
     if not np.any(valid):
-        p = FusionParams(
-            lambda_spec=float(resolved_fallback_fusion["lambda_spec"]),
-            lambda_tex=float(resolved_fallback_fusion["lambda_tex"]),
-            threshold=float(resolved_fallback_fusion["threshold"]),
-            min_area_m2=float(resolved_postprocess["min_area_m2"]),
-            morph_kernel=int(resolved_postprocess["morph_kernel"]),
-            shadow_penalty=float(resolved_postprocess["shadow_penalty"]),
+        p = FusionParams.from_mapping(
+            {**resolved_fallback_fusion, **resolved_postprocess},
         )
         fallback_metrics: dict[str, Any] = {
             "threshold": float(p.threshold),
@@ -157,14 +142,7 @@ def choose_fusion_by_validation(
     tex_vals = tex_vals[valid]
 
     if resolved_stage == 0:
-        candidate = FusionParams(
-            lambda_spec=float(fixed_params["lambda_spec"]),
-            lambda_tex=float(fixed_params["lambda_tex"]),
-            threshold=float(fixed_params["threshold"]),
-            min_area_m2=float(fixed_params["min_area_m2"]),
-            morph_kernel=int(fixed_params["morph_kernel"]),
-            shadow_penalty=float(fixed_params["shadow_penalty"]),
-        )
+        candidate = FusionParams.from_mapping(fixed_params)
         fused_prob = fuse_probabilities(dl_vals, spec_vals, tex_vals, candidate)
         metrics = binary_metrics(y_true, fused_prob, threshold=float(candidate.threshold))
         metrics["reward"] = float(metrics["accuracy"]) + float(metrics["f1"]) + float(metrics["iou"])
@@ -179,13 +157,8 @@ def choose_fusion_by_validation(
         grid_params["lambda_tex"],
         grid_params["threshold"],
     ):
-        candidate = FusionParams(
-            lambda_spec=float(ls),
-            lambda_tex=float(lt),
-            threshold=float(th),
-            min_area_m2=float(resolved_postprocess["min_area_m2"]),
-            morph_kernel=int(resolved_postprocess["morph_kernel"]),
-            shadow_penalty=float(resolved_postprocess["shadow_penalty"]),
+        candidate = FusionParams.from_mapping(
+            {"lambda_spec": ls, "lambda_tex": lt, "threshold": th, **resolved_postprocess},
         )
         fused_prob = fuse_probabilities(dl_vals, spec_vals, tex_vals, candidate)
         metrics = binary_metrics(y_true, fused_prob, threshold=float(candidate.threshold))

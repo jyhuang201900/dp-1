@@ -168,12 +168,14 @@ def build_best_round_restore_plan(
         (best_artifacts.get("prob_fused", ""), wf(work, "prob_fused"), "best round prob_fused", "file"),
         (best_artifacts.get("metrics_val", ""), wf(work, "metrics_val"), "best round metrics_val", "json"),
     ]
+    # ``unc_dl`` is always tracked as optional (it may legitimately be
+    # missing for legacy round snapshots) — only schedule a real restore
+    # entry when both the snapshot and the path-existence probe agree
+    # that the file is present.
+    optional_restore_labels = ["unc_dl"]
     best_unc_dl = best_artifacts.get("unc_dl")
     if best_unc_dl and path_exists(best_unc_dl):
         restore_entries.append((best_unc_dl, wf(work, "unc_dl"), "unc_dl", "file"))
-        optional_restore_labels = ["unc_dl"]
-    else:
-        optional_restore_labels = ["unc_dl"]
     return restore_entries, optional_restore_labels
 
 

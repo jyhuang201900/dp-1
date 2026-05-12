@@ -139,6 +139,7 @@ def _read_label_dataset(options: LabelReadOptions) -> LabelReadResult:
     valid_points: list[LabelPoint] = []
 
     crs_missing_for_target = False
+    src_crs: CRS | None = None
 
     try:
         with fiona.open(options.path, layer=selected_layer) as src:
@@ -192,7 +193,7 @@ def _read_label_dataset(options: LabelReadOptions) -> LabelReadResult:
     return LabelReadResult(
         available_layers=available_layers,
         selected_layer=selected_layer,
-        source_crs=src_crs if "src_crs" in locals() else None,
+        source_crs=src_crs,
         crs_missing_for_target=crs_missing_for_target,
         geometry_counts=geometry_counts,
         raw_label_counts=raw_label_counts,

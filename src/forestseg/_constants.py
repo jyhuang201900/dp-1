@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 
 __all__ = [
+    "FUSION_POSTPROCESS_PARAM_KEYS",
     "REQUIRED_FUSION_FIXED_PARAM_KEYS",
     "REQUIRED_FUSION_GRID_KEYS",
     "WORK_FILES",
@@ -57,6 +58,17 @@ REQUIRED_FUSION_FIXED_PARAM_KEYS: tuple[str, ...] = (
     "lambda_spec",
     "lambda_tex",
     "threshold",
+    "min_area_m2",
+    "morph_kernel",
+    "shadow_penalty",
+)
+
+# Postprocess-only subset of :data:`REQUIRED_FUSION_FIXED_PARAM_KEYS`:
+# these keys live in ``fusion.fixed_params`` but participate in the
+# morphology / vector-export step rather than the probabilistic fusion
+# itself. Together with :data:`REQUIRED_FUSION_GRID_KEYS` they partition
+# the full fixed-param key set.
+FUSION_POSTPROCESS_PARAM_KEYS: tuple[str, ...] = (
     "min_area_m2",
     "morph_kernel",
     "shadow_penalty",
