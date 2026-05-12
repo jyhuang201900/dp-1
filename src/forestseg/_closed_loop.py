@@ -23,11 +23,13 @@ in the failure summary (which the test suite checks).
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from typing import Any
 
 from ._rl_history import _history_entry
 
 __all__ = [
+    "ClosedLoopState",
     "build_artifact_paths_block",
     "build_best_round_restore_plan",
     "build_round_artifacts_map",
@@ -35,6 +37,80 @@ __all__ = [
     "build_summary",
     "reward_and_score",
 ]
+
+
+def _empty_restore_outcome() -> dict[str, list[str]]:
+    return {
+        "restored_optional_artifacts": [],
+        "failed_optional_artifacts": [],
+        "skipped_optional_artifacts": [],
+    }
+
+
+@dataclass
+class ClosedLoopState:
+    """Mutable run-state for a single ``cmd_run_closed_loop`` call.
+
+    Centralises the bookkeeping shared by the success and failure
+    paths: which rl_loop fields have been validated so far, the
+    current best round, accumulated history, and current pipeline
+    stage / round (used in failure summaries). Pure data — no IO.
+
+    :meth:`build_summary` is the canonical way to produce the
+    schema-v2 summary dict from the captured state; the closed-loop
+    driver calls it once for the success path and once (with a
+    ``failure`` dict) for the failure path.
+    """
+
+    artifact_paths_view: dict[str, str]
+    preflight: dict[str, Any] | None = None
+    rounds: int | None = None
+    patience: int | None = None
+    min_delta: float | None = None
+    selection_metric: str | None = None
+    best_score: float | None = None
+    best_round: int | None = None
+    best_entry: dict[str, Any] | None = None
+    loop_history: list[dict[str, Any]] = field(default_factory=list)
+    metrics_round_history: list[dict[str, Any]] = field(default_factory=list)
+    stagnant_rounds: int = 0
+    current_stage: str = "preflight"
+    current_round: int | None = None
+    restore_outcome: dict[str, list[str]] = field(default_factory=_empty_restore_outcome)
+    optional_restore_labels: list[str] = field(default_factory=list)
+    restored_labels: list[str] = field(default_factory=list)
+    failed_restore_labels: list[str] = field(default_factory=list)
+    loop_stopped_early: bool = False
+
+    def build_summary(
+        self,
+        *,
+        status: str,
+        failure: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Produce the schema-v2 summary dict from current state.
+
+        ``status`` is ``"ok"`` for the success path and ``"failed"``
+        for the failure path. When ``failure`` is provided it is
+        embedded into the summary's ``failure`` block.
+        """
+        return build_summary(
+            status=status,
+            preflight=self.preflight,
+            rounds_requested=self.rounds,
+            rounds_completed=len(self.loop_history),
+            patience=self.patience,
+            min_delta=self.min_delta,
+            selection_metric=self.selection_metric,
+            stopped_early=self.loop_stopped_early,
+            best_round=self.best_round,
+            best_score=self.best_score,
+            best_entry=self.best_entry,
+            restore_outcome=self.restore_outcome,
+            history=self.loop_history,
+            artifacts=self.artifact_paths_view,
+            failure=failure,
+        )
 
 
 def build_round_artifacts_map(round_paths: dict[str, str]) -> dict[str, str]:

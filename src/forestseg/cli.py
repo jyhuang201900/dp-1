@@ -37,11 +37,11 @@ from ._artifacts import (
 from ._bandit_config import _resolve_bandit_config as _resolve_bandit_config
 from ._bandit_runtime import BanditRuntime
 from ._closed_loop import (
+    ClosedLoopState as _ClosedLoopState,
     build_artifact_paths_block as _build_closed_loop_artifacts,
     build_best_round_restore_plan as _build_best_round_restore_plan,
     build_round_artifacts_map as _build_round_artifacts_map,
     build_round_history_entries as _build_round_history_entries,
-    build_summary as _build_closed_loop_summary,
     reward_and_score as _closed_loop_reward_and_score,
 )
 from ._constants import (
@@ -895,68 +895,75 @@ def cmd_postprocess_export(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _persist_closed_loop_outputs(
+    *,
+    metrics_history_path: str,
+    summary_path: str,
+    metrics_round_history: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    """Write the per-round metrics history and the run summary to disk."""
+    with open(metrics_history_path, "w", encoding="utf-8") as f:
+        json.dump(metrics_round_history, f, ensure_ascii=False, indent=2)
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+
+
 def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) -> dict[str, Any]:
+    """Drive the multi-round closed-loop training + RL-fusion + select-best workflow.
+
+    Maintains a :class:`_ClosedLoopState` for the lifetime of the call;
+    every checkpoint that the failure summary depends on (validated
+    rl_loop fields, accumulated history, current pipeline stage, etc.)
+    is recorded on that state object so the ``except`` branch can
+    produce a consistent schema-v2 summary regardless of how far the
+    run got.
+    """
     work = ensure_work(cfg)
     _log_progress("run-closed-loop: preflight")
     summary_path = wf(work, "closed_loop_summary")
     metrics_history_path = os.path.join(work, "metrics_round_history.json")
-    artifact_paths_view = _build_closed_loop_artifacts(
-        work,
-        metrics_history_path=metrics_history_path,
-        summary_path=summary_path,
-        wf=wf,
+    state = _ClosedLoopState(
+        artifact_paths_view=_build_closed_loop_artifacts(
+            work,
+            metrics_history_path=metrics_history_path,
+            summary_path=summary_path,
+            wf=wf,
+        ),
     )
-    preflight: dict[str, Any] | None = None
-    rounds: int | None = None
-    patience: int | None = None
-    min_delta: float | None = None
-    selection_metric: str | None = None
-    best_score: float | None = None
-    best_round: int | None = None
-    best_entry: dict[str, Any] | None = None
-    loop_history: list[dict[str, Any]] = []
-    metrics_round_history: list[dict[str, Any]] = []
-    stagnant_rounds = 0
-    current_stage = "preflight"
-    current_round: int | None = None
-    restore_outcome: dict[str, list[str]] = {
-        "restored_optional_artifacts": [],
-        "failed_optional_artifacts": [],
-        "skipped_optional_artifacts": [],
-    }
-    optional_restore_labels: list[str] = []
-    restored_labels: list[str] = []
-    failed_restore_labels: list[str] = []
-    loop_stopped_early = False
 
     try:
-        preflight = cmd_preflight_check(_with_stage_override(cfg, stage_override))
+        state.preflight = cmd_preflight_check(_with_stage_override(cfg, stage_override))
         loop_cfg = cfg.get("rl_loop", {})
-        rounds = _validate_positive_int(loop_cfg.get("rounds", 2), "rl_loop.rounds")
-        patience = _validate_positive_int(loop_cfg.get("patience", 2), "rl_loop.patience")
-        min_delta = _validate_non_negative_float(loop_cfg.get("min_delta", 0.001), "rl_loop.min_delta")
-        selection_metric = _validate_choice(
+        state.rounds = _validate_positive_int(loop_cfg.get("rounds", 2), "rl_loop.rounds")
+        state.patience = _validate_positive_int(loop_cfg.get("patience", 2), "rl_loop.patience")
+        state.min_delta = _validate_non_negative_float(loop_cfg.get("min_delta", 0.001), "rl_loop.min_delta")
+        state.selection_metric = _validate_choice(
             loop_cfg.get("selection_metric", "reward"),
             "rl_loop.selection_metric",
             VALID_RL_SELECTION_METRICS,
         )
 
-        current_stage = "prepare_input"
+        state.current_stage = "prepare_input"
         _log_progress("run-closed-loop: prepare-input")
         cmd_prepare_input(cfg)
-        current_stage = "build_spec_tex"
+        state.current_stage = "build_spec_tex"
         _log_progress("run-closed-loop: build-spec-tex")
         cmd_build_spec_tex(cfg)
-        current_stage = "prepare_label_points"
+        state.current_stage = "prepare_label_points"
         _log_progress("run-closed-loop: prepare-label-points")
         cmd_prepare_label_points(cfg)
 
+        rounds = state.rounds
+        selection_metric = state.selection_metric
+        patience = state.patience
+        min_delta = state.min_delta
         for round_idx in range(rounds):
             round_no = round_idx + 1
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} start")
-            current_round = round_no
+            state.current_round = round_no
             round_paths = _round_artifact_paths(work, round_no)
-            current_stage = "build_feature_stack"
+            state.current_stage = "build_feature_stack"
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} build-feature-stack")
             cmd_build_feature_stack(cfg)
             feature_meta_path = os.path.splitext(wf(work, "feature_stack"))[0] + "_meta.json"
@@ -967,14 +974,14 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
                 with open(round_paths["feature_meta"], "w", encoding="utf-8") as f:
                     json.dump(feature_meta, f, ensure_ascii=False, indent=2)
 
-            current_stage = "train_or_load_dl"
+            state.current_stage = "train_or_load_dl"
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} train-or-load-dl")
             train_out = cmd_train_or_load_dl(cfg, force_train=True)
             train_metrics = train_out.get("train_info", {}).get("metrics", {})
             with open(round_paths["train_metrics"], "w", encoding="utf-8") as f:
                 json.dump(train_metrics, f, ensure_ascii=False, indent=2)
 
-            current_stage = "run_rl_fusion"
+            state.current_stage = "run_rl_fusion"
             _log_progress(f"run-closed-loop: round {round_no}/{rounds} run-rl-fusion")
             rl_out = cmd_run_rl_fusion(cfg, stage_override=stage_override)
             validation_metrics = rl_out.get("validation_reward") or {}
@@ -989,7 +996,7 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
                 json.dump(rl_payload, f, ensure_ascii=False, indent=2)
             _rewrite_latest_rl_history_entry(wf(work, "rl_history"), round_no, selection_metric, score)
             feature_feedback_path = wf(work, "feature_feedback")
-            current_stage = "snapshot_round_artifacts"
+            state.current_stage = "snapshot_round_artifacts"
             _snapshot_required_json(rl_payload_path, round_paths["rl_payload"], f"round {round_no} rl_payload")
             _snapshot_required_json(
                 feature_feedback_path, round_paths["feature_feedback"], f"round {round_no} feature_feedback"
@@ -1014,96 +1021,82 @@ def cmd_run_closed_loop(cfg: dict[str, Any], stage_override: int | None = None) 
                 feedback_path=round_paths["feature_feedback"],
                 feature_meta=feature_meta,
             )
-            loop_history.append(loop_entry)
-            metrics_round_history.append(metrics_entry)
+            state.loop_history.append(loop_entry)
+            state.metrics_round_history.append(metrics_entry)
 
-            if best_score is None or score > best_score + min_delta:
-                best_score = score
-                best_round = round_no
-                best_entry = loop_entry
-                stagnant_rounds = 0
+            if state.best_score is None or score > state.best_score + min_delta:
+                state.best_score = score
+                state.best_round = round_no
+                state.best_entry = loop_entry
+                state.stagnant_rounds = 0
                 _log_progress(
                     f"run-closed-loop: round {round_no}/{rounds} best updated ({selection_metric}={score:.6f})"
                 )
             else:
-                stagnant_rounds += 1
+                state.stagnant_rounds += 1
                 _log_progress(
                     f"run-closed-loop: round {round_no}/{rounds} no improvement"
-                    f" ({selection_metric}={score:.6f}, stagnant={stagnant_rounds}/{patience})"
+                    f" ({selection_metric}={score:.6f}, stagnant={state.stagnant_rounds}/{patience})"
                 )
-                if stagnant_rounds >= patience:
-                    loop_stopped_early = True
+                if state.stagnant_rounds >= patience:
+                    state.loop_stopped_early = True
                     _log_progress("run-closed-loop: early stop triggered")
                     break
 
-        if best_entry:
-            _log_progress(f"run-closed-loop: restore best round {best_round}")
-            current_stage = "restore_best_round"
-            restore_entries, optional_restore_labels = _build_best_round_restore_plan(
+        if state.best_entry:
+            _log_progress(f"run-closed-loop: restore best round {state.best_round}")
+            state.current_stage = "restore_best_round"
+            restore_entries, state.optional_restore_labels = _build_best_round_restore_plan(
                 work,
-                best_entry.get("artifacts", {}),
+                state.best_entry.get("artifacts", {}),
                 wf=wf,
             )
-            restored_labels = _restore_outputs_atomically(restore_entries)
-            failed_restore_labels = []
-            restore_outcome = _optional_restore_outcome(optional_restore_labels, restored_labels, failed_restore_labels)
+            state.restored_labels = _restore_outputs_atomically(restore_entries)
+            state.failed_restore_labels = []
+            state.restore_outcome = _optional_restore_outcome(
+                state.optional_restore_labels,
+                state.restored_labels,
+                state.failed_restore_labels,
+            )
 
-        summary = _build_closed_loop_summary(
-            status="ok",
-            preflight=preflight,
-            rounds_requested=rounds,
-            rounds_completed=len(loop_history),
-            patience=patience,
-            min_delta=min_delta,
-            selection_metric=selection_metric,
-            stopped_early=loop_stopped_early,
-            best_round=best_round,
-            best_score=best_score,
-            best_entry=best_entry,
-            restore_outcome=restore_outcome,
-            history=loop_history,
-            artifacts=artifact_paths_view,
+        summary = state.build_summary(status="ok")
+        _persist_closed_loop_outputs(
+            metrics_history_path=metrics_history_path,
+            summary_path=summary_path,
+            metrics_round_history=state.metrics_round_history,
+            summary=summary,
         )
-        with open(metrics_history_path, "w", encoding="utf-8") as f:
-            json.dump(metrics_round_history, f, ensure_ascii=False, indent=2)
-        with open(summary_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, ensure_ascii=False, indent=2)
         _log_progress("run-closed-loop: completed")
         return summary
     except Exception as exc:
         raised_exc = exc
         if isinstance(exc, RestoreOutputsError):
-            restored_labels = exc.restored_labels
-            failed_restore_labels = [exc.failed_label] if exc.failed_label in optional_restore_labels else []
+            state.restored_labels = exc.restored_labels
+            state.failed_restore_labels = (
+                [exc.failed_label] if exc.failed_label in state.optional_restore_labels else []
+            )
             raised_exc = exc.__cause__ or ValueError(str(exc))
-        if best_entry and current_stage == "restore_best_round":
-            restore_outcome = _optional_restore_outcome(optional_restore_labels, restored_labels, failed_restore_labels)
-        failure_summary = _build_closed_loop_summary(
+        if state.best_entry and state.current_stage == "restore_best_round":
+            state.restore_outcome = _optional_restore_outcome(
+                state.optional_restore_labels,
+                state.restored_labels,
+                state.failed_restore_labels,
+            )
+        failure_summary = state.build_summary(
             status="failed",
-            preflight=preflight,
-            rounds_requested=rounds,
-            rounds_completed=len(loop_history),
-            patience=patience,
-            min_delta=min_delta,
-            selection_metric=selection_metric,
-            stopped_early=loop_stopped_early,
-            best_round=best_round,
-            best_score=best_score,
-            best_entry=best_entry,
-            restore_outcome=restore_outcome,
-            history=loop_history,
-            artifacts=artifact_paths_view,
             failure={
-                "stage": current_stage,
-                "round": current_round,
+                "stage": state.current_stage,
+                "round": state.current_round,
                 "error_type": type(raised_exc).__name__,
                 "message": str(raised_exc),
             },
         )
-        with open(metrics_history_path, "w", encoding="utf-8") as f:
-            json.dump(metrics_round_history, f, ensure_ascii=False, indent=2)
-        with open(summary_path, "w", encoding="utf-8") as f:
-            json.dump(failure_summary, f, ensure_ascii=False, indent=2)
+        _persist_closed_loop_outputs(
+            metrics_history_path=metrics_history_path,
+            summary_path=summary_path,
+            metrics_round_history=state.metrics_round_history,
+            summary=failure_summary,
+        )
         raise raised_exc
 
 
