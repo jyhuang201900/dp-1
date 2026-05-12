@@ -63,7 +63,7 @@ def _normalize_legacy_rl_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
     which calls this function first.
     """
     # Import lazily to avoid a circular dependency at module load time.
-    from ._rl_history import VALID_RL_SELECTION_METRICS
+    from .history import VALID_RL_SELECTION_METRICS
 
     normalized_entry = dict(entry)
 

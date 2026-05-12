@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from forestseg.fusion import FusionParams
+from forestseg.fusion.core import FusionParams
 
 
 def test_from_mapping_with_full_mapping_round_trips() -> None:

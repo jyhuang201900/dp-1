@@ -6,8 +6,8 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from ._io import atomic_write_json
-from .io_raster import FLOAT_NODATA, normalize_clip
+from ..core.io import atomic_write_json
+from ..io.raster import FLOAT_NODATA, normalize_clip
 
 
 def _normalize_optional_raster(input_path: str, output_path: str, pmin: float = 2.0, pmax: float = 98.0) -> str:

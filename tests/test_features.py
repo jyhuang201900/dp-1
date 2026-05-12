@@ -4,7 +4,7 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 
-from forestseg.features import build_feature_stack
+from forestseg.features.stack import build_feature_stack
 
 BASE_PROFILE = {
     "driver": "GTiff",

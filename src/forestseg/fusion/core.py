@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from skimage.measure import label
 
-from .io_raster import normalized_valid_mask
+from ..io.raster import normalized_valid_mask
 
 # Defaults applied by :meth:`FusionParams.from_mapping` when neither
 # the source mapping nor the caller-supplied ``defaults`` mapping

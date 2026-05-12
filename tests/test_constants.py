@@ -12,7 +12,7 @@ side would silently shadow the other.
 
 from __future__ import annotations
 
-from forestseg._constants import (
+from forestseg.core.constants import (
     FUSION_POSTPROCESS_PARAM_KEYS,
     REQUIRED_FUSION_FIXED_PARAM_KEYS,
     REQUIRED_FUSION_GRID_KEYS,

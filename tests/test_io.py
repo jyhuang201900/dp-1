@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from forestseg._io import atomic_write_json, read_json, write_json
+from forestseg.core.io import atomic_write_json, read_json, write_json
 
 
 def test_write_json_round_trips_via_read_json(tmp_path: Path) -> None:

@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from forestseg._constants import wf
-from forestseg._feature_feedback import _feature_feedback_transforms
+from forestseg.core.constants import wf
+from forestseg.features.transforms import _feature_feedback_transforms
 
 
 def _write_feedback(work: Path, payload: object) -> None:

@@ -21,8 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ._paths import _require_existing_path
-from ._validators import (
+from ..core.paths import _require_existing_path
+from ..core.validators import (
     _validate_non_negative_int,
     _validate_positive_float,
     _validate_ratio,

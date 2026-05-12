@@ -1,6 +1,6 @@
 import pytest
 
-from forestseg import labels as labels_module
+from forestseg.labels import points as labels_module
 
 
 class DummyCollection:

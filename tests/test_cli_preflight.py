@@ -10,7 +10,11 @@ import numpy as np
 import pytest
 import torch
 
-from forestseg.cli import (
+from forestseg.dl.train import train_supervised_model
+from forestseg.fusion import FusionParams
+from forestseg.io.scene import _parse_scene_file_fallback, _source_scene, resolve_scene_input
+from forestseg.labels import load_points_json
+from forestseg.pipeline.cli import (
     _load_rl_history,
     cmd_check_label_points,
     cmd_preflight_check,
@@ -22,10 +26,6 @@ from forestseg.cli import (
     cmd_train_or_load_dl,
     main,
 )
-from forestseg.fusion import FusionParams
-from forestseg.labels import load_points_json
-from forestseg.scene_runtime import _parse_scene_file_fallback, _source_scene, resolve_scene_input
-from forestseg.train import train_supervised_model
 
 REQUIRED_FUSION_GRID = {
     "lambda_spec": [0.2],
@@ -231,23 +231,23 @@ def _make_preflight_stage_report(stage: int) -> dict:
 
 def _stub_closed_loop_prereqs(monkeypatch, *, preflight=None, build_feature_stack=None) -> None:
     monkeypatch.setattr(
-        "forestseg.cli.cmd_preflight_check",
+        "forestseg.pipeline.cli.cmd_preflight_check",
         preflight or (lambda current_cfg: {"status": "ok"}),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_input",
+        "forestseg.pipeline.cli.cmd_prepare_input",
         lambda current_cfg: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_build_spec_tex",
+        "forestseg.pipeline.cli.cmd_build_spec_tex",
         lambda current_cfg: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_label_points",
+        "forestseg.pipeline.cli.cmd_prepare_label_points",
         lambda current_cfg: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_build_feature_stack",
+        "forestseg.pipeline.cli.cmd_build_feature_stack",
         build_feature_stack or (lambda current_cfg: None),
     )
 
@@ -279,19 +279,19 @@ def _make_partial_rl_history_entry(
 
 def _stub_rl_history_fail_fast_before_lazy_setup(monkeypatch) -> None:
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_input",
+        "forestseg.pipeline.cli.cmd_prepare_input",
         lambda current_cfg: (_ for _ in ()).throw(AssertionError("prepare_input should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_build_spec_tex",
+        "forestseg.pipeline.cli.cmd_build_spec_tex",
         lambda current_cfg: (_ for _ in ()).throw(AssertionError("build_spec_tex should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: (_ for _ in ()).throw(AssertionError("train_or_load_dl should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_label_points",
+        "forestseg.pipeline.cli.cmd_prepare_label_points",
         lambda current_cfg: (_ for _ in ()).throw(AssertionError("prepare_label_points should not run")),
     )
 
@@ -339,29 +339,29 @@ def _stub_rl_fusion_runtime(
 ) -> None:
     if stub_prepare_input:
         monkeypatch.setattr(
-            "forestseg.cli.cmd_prepare_input",
+            "forestseg.pipeline.cli.cmd_prepare_input",
             lambda current_cfg: None,
         )
     fake_preview = preview or type("R", (), {"arr": np.zeros((2, 2), dtype=float)})()
     monkeypatch.setattr(
-        "forestseg.cli.read_downsampled_band1",
+        "forestseg.pipeline.cli.read_downsampled_band1",
         lambda *args, **kwargs: fake_preview,
     )
     monkeypatch.setattr(
-        "forestseg.cli.build_state",
+        "forestseg.pipeline.cli.build_state",
         lambda *args, **kwargs: {},
     )
     monkeypatch.setattr(
-        "forestseg.cli.process_aligned_inputs_to_output",
+        "forestseg.pipeline.cli.process_aligned_inputs_to_output",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_band1",
+        "forestseg.pipeline.cli.read_band1",
         lambda path: type("Raster", (), {"profile": {"transform": None}})(),
     )
     if stub_save_metrics:
         monkeypatch.setattr(
-            "forestseg.cli.save_metrics",
+            "forestseg.pipeline.cli.save_metrics",
             lambda *args, **kwargs: None,
         )
 
@@ -369,44 +369,44 @@ def _stub_rl_fusion_runtime(
 def _stub_rl_fusion_validation_runtime(monkeypatch, *, preview=None) -> None:
     _stub_rl_fusion_runtime(monkeypatch, preview=preview)
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("choose_fusion_by_validation should not run")),
     )
 
 
 def _stub_rl_fusion_fail_fast_runtime(monkeypatch, *, guard_infer_to_files: bool = False) -> None:
     monkeypatch.setattr(
-        "forestseg.cli.read_downsampled_band1",
+        "forestseg.pipeline.cli.read_downsampled_band1",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("read_downsampled_band1 should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.build_state",
+        "forestseg.pipeline.cli.build_state",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("build_state should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.process_aligned_inputs_to_output",
+        "forestseg.pipeline.cli.process_aligned_inputs_to_output",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("process_aligned_inputs_to_output should not run")
         ),
     )
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("choose_fusion_by_validation should not run")),
     )
     if guard_infer_to_files:
         monkeypatch.setattr(
-            "forestseg.cli.infer_to_files",
+            "forestseg.pipeline.cli.infer_to_files",
             lambda **kwargs: (_ for _ in ()).throw(AssertionError("infer_to_files should not run")),
         )
 
 
 def _stub_label_validation_without_preflight(monkeypatch) -> None:
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_input",
+        "forestseg.pipeline.cli.cmd_prepare_input",
         lambda current_cfg: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_band1",
+        "forestseg.pipeline.cli.read_band1",
         lambda path: type(
             "Raster",
             (),
@@ -450,7 +450,7 @@ def _stub_scene_input(
         )()
 
     monkeypatch.setattr(
-        "forestseg.cli.resolve_scene_input",
+        "forestseg.pipeline.cli.resolve_scene_input",
         fake_resolve_scene_input,
     )
 
@@ -541,15 +541,15 @@ def test_ensure_directory_writable_ignores_probe_cleanup_failure(monkeypatch, tm
             return False
 
     monkeypatch.setattr(
-        "forestseg.cli.tempfile.NamedTemporaryFile",
+        "forestseg.pipeline.cli.tempfile.NamedTemporaryFile",
         lambda *args, **kwargs: DummyProbe(probe_path),
     )
     monkeypatch.setattr(
-        "forestseg.cli.os.remove",
+        "forestseg.pipeline.cli.os.remove",
         lambda path: (_ for _ in ()).throw(OSError("cleanup blocked")),
     )
 
-    from forestseg.cli import _ensure_directory_writable
+    from forestseg.pipeline.cli import _ensure_directory_writable
 
     assert _ensure_directory_writable(
         str(target_dir),
@@ -561,7 +561,7 @@ def test_cmd_preflight_check_raises_for_unwritable_checkpoint_dir(monkeypatch, t
     cfg = _make_base_cfg(tmp_path)
     checkpoint_dir = os.path.dirname(cfg["dl"]["checkpoint_path"])
 
-    from forestseg.cli import _ensure_directory_writable as original_ensure_directory_writable
+    from forestseg.pipeline.cli import _ensure_directory_writable as original_ensure_directory_writable
 
     def fake_ensure_directory_writable(path, label):
         if path == checkpoint_dir:
@@ -569,7 +569,7 @@ def test_cmd_preflight_check_raises_for_unwritable_checkpoint_dir(monkeypatch, t
         return original_ensure_directory_writable(path, label)
 
     monkeypatch.setattr(
-        "forestseg.cli._ensure_directory_writable",
+        "forestseg.pipeline.cli._ensure_directory_writable",
         fake_ensure_directory_writable,
     )
 
@@ -732,7 +732,7 @@ def test_cmd_preflight_check_rejects_unwritable_generated_export_dir(
         return real_named_temporary_file(*args, **kwargs)
 
     monkeypatch.setattr(
-        "forestseg.cli.tempfile.NamedTemporaryFile",
+        "forestseg.pipeline.cli.tempfile.NamedTemporaryFile",
         fake_named_temporary_file,
     )
 
@@ -750,7 +750,7 @@ def test_cmd_prepare_input_normalizes_boolean_flags(
 
     _stub_scene_input(monkeypatch, capture_calls=captured)
     monkeypatch.setattr(
-        "forestseg.cli.normalize_raster_to_file",
+        "forestseg.pipeline.cli.normalize_raster_to_file",
         lambda *args, **kwargs: {"ok": True},
     )
 
@@ -772,7 +772,7 @@ def test_cmd_prepare_input_rejects_invalid_boolean_flag(
     cfg = _make_base_cfg(tmp_path)
     cfg["input"] = {field_name: "maybe"}
 
-    monkeypatch.setattr("forestseg.cli.resolve_scene_input", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.resolve_scene_input", lambda *args, **kwargs: None)
 
     with pytest.raises(ValueError, match=rf"input\.{field_name}"):
         cmd_prepare_input(cfg)
@@ -802,7 +802,7 @@ def test_resolve_scene_input_respects_disabled_fallback(
     (export_dir / "x_utm_v1.tif").write_text("placeholder", encoding="utf-8")
 
     monkeypatch.setattr(
-        "forestseg.scene_runtime._source_scene",
+        "forestseg.io.scene._source_scene",
         lambda scene_sh: {
             "SCENE_ID": "x",
             "CROPPED_RASTER": "x",
@@ -839,7 +839,7 @@ def test_source_scene_raises_on_bash_source_failure(
     def fake_check_output(*args, **kwargs):
         raise subprocess.CalledProcessError(1, args[0], output="syntax error")
 
-    monkeypatch.setattr("forestseg.scene_runtime.subprocess.check_output", fake_check_output)
+    monkeypatch.setattr("forestseg.io.scene.subprocess.check_output", fake_check_output)
 
     with pytest.raises(RuntimeError, match="scene.sh"):
         _source_scene(str(scene_sh))
@@ -855,9 +855,9 @@ def test_resolve_scene_input_raises_on_source_failure(
     def fake_check_output(*args, **kwargs):
         raise subprocess.CalledProcessError(1, args[0], output="syntax error")
 
-    monkeypatch.setattr("forestseg.scene_runtime.subprocess.check_output", fake_check_output)
+    monkeypatch.setattr("forestseg.io.scene.subprocess.check_output", fake_check_output)
     monkeypatch.setattr(
-        "forestseg.scene_runtime._parse_scene_file_fallback",
+        "forestseg.io.scene._parse_scene_file_fallback",
         lambda scene_path: (_ for _ in ()).throw(AssertionError("fallback should not run")),
     )
 
@@ -880,7 +880,7 @@ def test_resolve_scene_input_static_fallback_honors_explicit_generated_export_di
     expected_input.write_text("placeholder", encoding="utf-8")
 
     monkeypatch.setattr(
-        "forestseg.scene_runtime.subprocess.check_output",
+        "forestseg.io.scene.subprocess.check_output",
         lambda *args, **kwargs: "SCENE_ID=x\nCROPPED_RASTER=x\n",
     )
 
@@ -927,12 +927,12 @@ def test_cmd_run_rl_fusion_accepts_stage0_with_fixed_params_only_when_preflight_
     _write_basic_rl_fusion_inputs(work_dir)
 
     monkeypatch.setattr(
-        "forestseg.cli.save_metrics",
+        "forestseg.pipeline.cli.save_metrics",
         lambda *args, **kwargs: None,
     )
     captured = {}
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_input",
+        "forestseg.pipeline.cli.cmd_prepare_input",
         lambda current_cfg: None,
     )
     _stub_rl_fusion_validation_runtime(monkeypatch)
@@ -948,7 +948,7 @@ def test_cmd_run_rl_fusion_accepts_stage0_with_fixed_params_only_when_preflight_
         )
 
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         fake_choose_fusion_by_validation,
     )
 
@@ -1282,15 +1282,15 @@ def test_cmd_train_or_load_dl_rejects_invalid_val_threshold_before_training(
     (work_dir / "samples_val.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
 
     monkeypatch.setattr(
-        "forestseg.cli.load_points_json",
+        "forestseg.pipeline.cli.load_points_json",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("load_points_json should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.train_supervised_model",
+        "forestseg.pipeline.cli.train_supervised_model",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("train_supervised_model should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.infer_to_files",
+        "forestseg.pipeline.cli.infer_to_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("infer_to_files should not run")),
     )
 
@@ -1317,7 +1317,7 @@ def test_cmd_train_or_load_dl_accepts_boundary_val_threshold_when_training(
 
     captured = {}
 
-    monkeypatch.setattr("forestseg.cli.load_points_json", lambda *args, **kwargs: ([], {}))
+    monkeypatch.setattr("forestseg.pipeline.cli.load_points_json", lambda *args, **kwargs: ([], {}))
 
     def fake_train_supervised_model(*args, **kwargs):
         captured["val_threshold"] = kwargs["cfg"]["val_threshold"]
@@ -1331,10 +1331,10 @@ def test_cmd_train_or_load_dl_accepts_boundary_val_threshold_when_training(
             },
         )()
 
-    monkeypatch.setattr("forestseg.cli.train_supervised_model", fake_train_supervised_model)
-    monkeypatch.setattr("forestseg.cli.save_metrics", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.train_supervised_model", fake_train_supervised_model)
+    monkeypatch.setattr("forestseg.pipeline.cli.save_metrics", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "forestseg.cli.infer_to_files",
+        "forestseg.pipeline.cli.infer_to_files",
         lambda **kwargs: None,
     )
 
@@ -1383,16 +1383,16 @@ def test_cmd_run_rl_fusion_allows_invalid_val_threshold_with_existing_artifacts(
     cfg["work_dir"] = str(work_dir)
 
     _write_basic_rl_fusion_inputs(work_dir)
-    monkeypatch.setattr("forestseg.cli.save_metrics", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.save_metrics", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("cmd_train_or_load_dl should not run")),
     )
-    monkeypatch.setattr("forestseg.cli.cmd_prepare_input", lambda current_cfg: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_prepare_input", lambda current_cfg: None)
     _stub_rl_fusion_validation_runtime(monkeypatch)
 
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: (
             FusionParams(**_make_fusion_params(threshold=0.6)),
             {"reward": 0.1, "f1": 0.8},
@@ -1423,33 +1423,33 @@ def test_cmd_run_rl_fusion_allows_invalid_val_threshold_when_lazy_build_uses_exi
     checkpoint_path.write_text("placeholder", encoding="utf-8")
 
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_input",
+        "forestseg.pipeline.cli.cmd_prepare_input",
         lambda current_cfg: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_build_spec_tex",
+        "forestseg.pipeline.cli.cmd_build_spec_tex",
         lambda current_cfg: None,
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_downsampled_band1",
+        "forestseg.pipeline.cli.read_downsampled_band1",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("read_downsampled_band1 should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.build_state",
+        "forestseg.pipeline.cli.build_state",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("build_state should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.process_aligned_inputs_to_output",
+        "forestseg.pipeline.cli.process_aligned_inputs_to_output",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("process_aligned_inputs_to_output should not run")
         ),
     )
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("choose_fusion_by_validation should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.infer_to_files",
+        "forestseg.pipeline.cli.infer_to_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("infer_to_files should not run")),
     )
 
@@ -1557,7 +1557,7 @@ def test_cmd_run_rl_fusion_normalizes_partial_rl_history_entry_missing_selected_
 
     _stub_rl_fusion_runtime(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: _make_fixed_validation_selection(),
     )
 
@@ -1594,7 +1594,7 @@ def test_cmd_run_rl_fusion_normalizes_downgraded_selection_metric_with_legacy_sc
 
     _stub_rl_fusion_runtime(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: _make_fixed_validation_selection(),
     )
 
@@ -1733,7 +1733,7 @@ def test_cmd_run_rl_fusion_rejects_malformed_rl_history(
 
     _stub_rl_fusion_runtime(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: _make_fixed_validation_selection(),
     )
 
@@ -1756,7 +1756,7 @@ def test_cmd_run_rl_fusion_persists_selected_fixed_postprocess_params(
 
     _stub_rl_fusion_runtime(monkeypatch, stub_prepare_input=True, stub_save_metrics=True)
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: _make_fixed_validation_selection(),
     )
 
@@ -1820,7 +1820,7 @@ def test_cmd_run_rl_fusion_real_selection_keeps_fixed_postprocess_params(
     def fake_sample(path, points):
         return sample_values[path]
 
-    monkeypatch.setattr("forestseg.rl_policy.sample_raster_at_points", fake_sample)
+    monkeypatch.setattr("forestseg.fusion.policy.sample_raster_at_points", fake_sample)
 
     result = cmd_run_rl_fusion(cfg)
     payload = json.loads((work_dir / "fusion_selected.json").read_text(encoding="utf-8"))
@@ -1860,7 +1860,7 @@ def test_cmd_run_rl_fusion_bandit_stage1_forwards_single_candidate_grid(
         return _make_fixed_validation_selection()
 
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         fake_choose_fusion_by_validation,
     )
 
@@ -1914,7 +1914,7 @@ def test_cmd_run_rl_fusion_bandit_state_updates_across_calls(
         )
 
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         fake_choose_fusion_by_validation,
     )
 
@@ -2000,7 +2000,7 @@ def test_train_supervised_model_rejects_invalid_positive_ints_before_raster_io(
     cfg[override_key] = bad_value
 
     monkeypatch.setattr(
-        "forestseg.train.rasterio.open",
+        "forestseg.dl.train.rasterio.open",
         lambda path: (_ for _ in ()).throw(AssertionError("rasterio.open should not be called")),
     )
 
@@ -2060,26 +2060,26 @@ def test_train_supervised_model_returns_json_serializable_metrics(
 
     saved_checkpoint = {}
 
-    monkeypatch.setattr("forestseg.train.rasterio.open", lambda path: DummyDataset())
-    monkeypatch.setattr("forestseg.train.build_model", lambda **kwargs: DummyModel())
+    monkeypatch.setattr("forestseg.dl.train.rasterio.open", lambda path: DummyDataset())
+    monkeypatch.setattr("forestseg.dl.train.build_model", lambda **kwargs: DummyModel())
     monkeypatch.setattr(
-        "forestseg.train.to_device",
+        "forestseg.dl.train.to_device",
         lambda model: (model, "cpu"),
     )
     monkeypatch.setattr(
-        "forestseg.train.nn.BCEWithLogitsLoss",
+        "forestseg.dl.train.nn.BCEWithLogitsLoss",
         lambda reduction="none": lambda logits, y: torch.ones_like(logits),
     )
     monkeypatch.setattr(
-        "forestseg.train.DiceLoss",
+        "forestseg.dl.train.DiceLoss",
         lambda: DummyLoss(),
     )
     monkeypatch.setattr(
-        "forestseg.train.optim.AdamW",
+        "forestseg.dl.train.optim.AdamW",
         lambda params, lr, weight_decay: DummyOptimizer(),
     )
     monkeypatch.setattr(
-        "forestseg.train.make_training_batch",
+        "forestseg.dl.train.make_training_batch",
         lambda **kwargs: (
             np.zeros((1, 2, 4, 4), dtype=np.float32),
             np.zeros((1, 1, 4, 4), dtype=np.float32),
@@ -2087,14 +2087,14 @@ def test_train_supervised_model_returns_json_serializable_metrics(
         ),
     )
     monkeypatch.setattr(
-        "forestseg.train.evaluate_points",
+        "forestseg.dl.train.evaluate_points",
         lambda **kwargs: (
             np.array([0, 1], dtype=np.uint8),
             np.array([0.1, 0.9], dtype=np.float32),
         ),
     )
     monkeypatch.setattr(
-        "forestseg.train.torch.save",
+        "forestseg.dl.train.torch.save",
         lambda obj, path: saved_checkpoint.update({"payload": obj, "path": path}),
     )
 
@@ -2131,7 +2131,7 @@ def test_cmd_train_or_load_dl_rejects_invalid_selection_metric_before_training(
     (work_dir / "samples_train.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
     (work_dir / "samples_val.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
 
-    monkeypatch.setattr("forestseg.cli.infer_to_files", lambda **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.infer_to_files", lambda **kwargs: None)
 
     cfg = _make_base_cfg(tmp_path, dl_overrides={"selection_metric": " auc "})
     cfg["work_dir"] = str(work_dir)
@@ -2149,7 +2149,7 @@ def test_cmd_train_or_load_dl_rejects_stride_greater_than_tile_size_before_train
     (work_dir / "samples_val.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
 
     monkeypatch.setattr(
-        "forestseg.cli.infer_to_files",
+        "forestseg.pipeline.cli.infer_to_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("infer_to_files should not run")),
     )
 
@@ -2188,15 +2188,15 @@ def test_cmd_train_or_load_dl_rejects_invalid_training_inputs_before_training_ru
     (work_dir / "samples_val.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
 
     monkeypatch.setattr(
-        "forestseg.cli.load_points_json",
+        "forestseg.pipeline.cli.load_points_json",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("load_points_json should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.train_supervised_model",
+        "forestseg.pipeline.cli.train_supervised_model",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("train_supervised_model should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.infer_to_files",
+        "forestseg.pipeline.cli.infer_to_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("infer_to_files should not run")),
     )
 
@@ -2230,7 +2230,7 @@ def test_cmd_train_or_load_dl_rejects_invalid_positive_ints_before_training(
     (work_dir / "samples_train.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
     (work_dir / "samples_val.json").write_text('{"points": [], "meta": {}}', encoding="utf-8")
 
-    monkeypatch.setattr("forestseg.cli.infer_to_files", lambda **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.infer_to_files", lambda **kwargs: None)
 
     cfg = _make_base_cfg(tmp_path, dl_overrides={override_key: bad_value})
     cfg["work_dir"] = str(work_dir)
@@ -2246,13 +2246,13 @@ def test_main_applies_stage_override_to_preflight_check(
     captured = {}
 
     monkeypatch.setattr(
-        "forestseg.cli._build_parser",
+        "forestseg.pipeline.cli._build_parser",
         lambda: SimpleNamespace(
             parse_args=lambda: SimpleNamespace(command="preflight-check", config="cfg.yaml", force_train=False, stage=0)
         ),
     )
     monkeypatch.setattr(
-        "forestseg.cli.load_cfg",
+        "forestseg.pipeline.cli.load_cfg",
         lambda path: {"fusion": {"stage": 1, "grid": {}, "fixed_params": {}}},
     )
 
@@ -2260,7 +2260,7 @@ def test_main_applies_stage_override_to_preflight_check(
         captured["stage"] = current_cfg["fusion"]["stage"]
         return _make_preflight_stage_report(current_cfg["fusion"]["stage"])
 
-    monkeypatch.setattr("forestseg.cli.cmd_preflight_check", fake_preflight)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_preflight_check", fake_preflight)
 
     main()
 
@@ -2280,30 +2280,30 @@ def test_main_forwards_stage_override_to_cli_commands(
     captured = {}
 
     monkeypatch.setattr(
-        "forestseg.cli._build_parser",
+        "forestseg.pipeline.cli._build_parser",
         lambda: SimpleNamespace(
             parse_args=lambda: SimpleNamespace(command=command_name, config="cfg.yaml", force_train=False, stage=0)
         ),
     )
     monkeypatch.setattr(
-        "forestseg.cli.load_cfg",
+        "forestseg.pipeline.cli.load_cfg",
         lambda path: {"fusion": {"stage": 1, "grid": {}, "fixed_params": {}}},
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_preflight_check",
+        "forestseg.pipeline.cli.cmd_preflight_check",
         lambda current_cfg: (_ for _ in ()).throw(
             AssertionError("cmd_preflight_check should not run directly from main")
         ),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_closed_loop",
+        "forestseg.pipeline.cli.cmd_run_closed_loop",
         lambda current_cfg, stage_override=None: (
             captured.update({"command": "run-closed-loop", "stage_override": stage_override})
             or {"status": "ok", "stage_override": stage_override}
         ),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_all",
+        "forestseg.pipeline.cli.cmd_run_all",
         lambda current_cfg, force_train=False, stage_override=None: (
             captured.update({"command": "run-all", "force_train": force_train, "stage_override": stage_override})
             or {"status": "ok", "stage_override": stage_override}
@@ -2335,7 +2335,7 @@ def test_cmd_run_closed_loop_applies_stage_override_to_preflight(
 
     _stub_closed_loop_prereqs(monkeypatch, preflight=fake_preflight)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: _make_train_result(train_metrics={"f1": 0.8}),
     )
 
@@ -2380,7 +2380,7 @@ def test_cmd_run_closed_loop_applies_stage_override_to_preflight(
         )
         return _make_rl_result(reward=0.8, f1=0.8, params=params, stage_used="validation_stage0")
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     summary = cmd_run_closed_loop(cfg, stage_override=0)
 
@@ -2403,33 +2403,33 @@ def test_cmd_run_all_applies_stage_override_to_preflight_and_closed_loop(
         captured["preflight_stage"] = current_cfg["fusion"]["stage"]
         return {"status": "ok"}
 
-    monkeypatch.setattr("forestseg.cli.cmd_preflight_check", fake_preflight)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_preflight_check", fake_preflight)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_input",
+        "forestseg.pipeline.cli.cmd_prepare_input",
         lambda current_cfg: captured.setdefault("prepare_input_called", True),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_build_spec_tex",
+        "forestseg.pipeline.cli.cmd_build_spec_tex",
         lambda current_cfg: captured.setdefault("build_spec_tex_called", True),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_prepare_label_points",
+        "forestseg.pipeline.cli.cmd_prepare_label_points",
         lambda current_cfg: captured.setdefault("prepare_label_points_called", True),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_build_feature_stack",
+        "forestseg.pipeline.cli.cmd_build_feature_stack",
         lambda current_cfg: captured.setdefault("build_feature_stack_called", True),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: captured.setdefault("force_train", force_train),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_closed_loop",
+        "forestseg.pipeline.cli.cmd_run_closed_loop",
         lambda current_cfg, stage_override=None: captured.update({"closed_loop_stage_override": stage_override}),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_postprocess_export",
+        "forestseg.pipeline.cli.cmd_postprocess_export",
         lambda current_cfg: {"status": "done"},
     )
 
@@ -2466,7 +2466,7 @@ def test_cmd_run_closed_loop_preserves_stale_rl_history_until_first_round_succee
 
     _stub_closed_loop_prereqs(monkeypatch, build_feature_stack=fake_build_feature_stack)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: (
             (work_dir / "prob_dl.tif").write_bytes(b"round-1-dl"),
             (work_dir / "metrics_val.json").write_text(
@@ -2510,7 +2510,7 @@ def test_cmd_run_closed_loop_preserves_stale_rl_history_until_first_round_succee
         (work_dir / "prob_fused.tif").write_bytes(b"round-1")
         return _make_rl_result(reward=0.2, f1=0.7)
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     summary = cmd_run_closed_loop(cfg)
 
@@ -2554,11 +2554,11 @@ def test_cmd_run_closed_loop_preserves_stale_rl_artifacts_when_first_round_fails
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: _make_train_result(train_metrics={"f1": 0.8}),
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_rl_fusion",
+        "forestseg.pipeline.cli.cmd_run_rl_fusion",
         lambda current_cfg, stage_override=None: (_ for _ in ()).throw(ValueError("boom during fusion")),
     )
 
@@ -2647,7 +2647,7 @@ def test_cmd_run_closed_loop_selects_best_by_selection_metric_even_when_reward_i
             train_metrics=payload["train_metrics"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -2672,7 +2672,7 @@ def test_cmd_run_closed_loop_selects_best_by_selection_metric_even_when_reward_i
             stage_used=payload["stage_used"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     summary = cmd_run_closed_loop(cfg)
     persisted_summary = json.loads((work_dir / "closed_loop_summary.json").read_text(encoding="utf-8"))
@@ -2773,7 +2773,7 @@ def test_cmd_run_closed_loop_writes_schema_version_into_round_history(monkeypatc
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: (
             (work_dir / "prob_dl.tif").write_bytes(b"round-dl"),
             (work_dir / "unc_dl.tif").write_bytes(b"round-unc"),
@@ -2785,7 +2785,7 @@ def test_cmd_run_closed_loop_writes_schema_version_into_round_history(monkeypatc
         )[-1],
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_rl_fusion",
+        "forestseg.pipeline.cli.cmd_run_rl_fusion",
         lambda current_cfg, stage_override=None: (
             (work_dir / "fusion_selected.json").write_text(
                 json.dumps(
@@ -2912,7 +2912,7 @@ def test_cmd_run_closed_loop_rewrites_rl_history_to_loop_selection_metric(monkey
         (work_dir / "unc_dl.tif").write_bytes(f"unc-{current_round['value'] + 1}".encode())
         return _make_train_result(train_metrics=payload["train_metrics"])
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -2961,7 +2961,7 @@ def test_cmd_run_closed_loop_rewrites_rl_history_to_loop_selection_metric(monkey
             params=payload["params"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     cmd_run_closed_loop(cfg)
     history = _load_rl_history(str(work_dir / "rl_history.json"))
@@ -3029,7 +3029,7 @@ def test_cmd_run_closed_loop_marks_success_summary_as_stopped_early_when_patienc
         (work_dir / "unc_dl.tif").write_bytes(f"unc-{current_round['value'] + 1}".encode())
         return _make_train_result(train_metrics=payload["train_metrics"])
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -3078,7 +3078,7 @@ def test_cmd_run_closed_loop_marks_success_summary_as_stopped_early_when_patienc
             params=payload["params"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     summary = cmd_run_closed_loop(cfg)
     persisted_summary = json.loads((work_dir / "closed_loop_summary.json").read_text(encoding="utf-8"))
@@ -3130,14 +3130,14 @@ def test_cmd_run_closed_loop_writes_failure_summary_for_round_stage_errors(monke
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: _make_train_result(train_metrics={"f1": 0.8}),
     )
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         raise ValueError("boom during fusion")
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     with pytest.raises(ValueError, match="boom during fusion"):
         cmd_run_closed_loop(cfg)
@@ -3188,7 +3188,7 @@ def test_cmd_run_closed_loop_writes_failure_summary_for_best_round_restore_error
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: (
             (work_dir / "metrics_val.json").write_text(
                 json.dumps({"f1": 0.9}, ensure_ascii=False, indent=2),
@@ -3200,7 +3200,7 @@ def test_cmd_run_closed_loop_writes_failure_summary_for_best_round_restore_error
         )[-1],
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_rl_fusion",
+        "forestseg.pipeline.cli.cmd_run_rl_fusion",
         lambda current_cfg, stage_override=None: (
             (work_dir / "fusion_selected.json").write_text(
                 json.dumps(_make_fusion_selected_payload(threshold=0.4), ensure_ascii=False, indent=2),
@@ -3232,14 +3232,14 @@ def test_cmd_run_closed_loop_writes_failure_summary_for_best_round_restore_error
         )[-1],
     )
 
-    original_require_json = __import__("forestseg.cli", fromlist=["_require_json_copy"])._require_json_copy
+    original_require_json = __import__("forestseg.pipeline.cli", fromlist=["_require_json_copy"])._require_json_copy
 
     def fake_require_json(src, dst, label):
         if label == "best round metrics_val":
             raise ValueError(f"Missing {label}: {src}")
         return original_require_json(src, dst, label)
 
-    monkeypatch.setattr("forestseg.cli._require_json_copy", fake_require_json)
+    monkeypatch.setattr("forestseg.pipeline.cli._require_json_copy", fake_require_json)
 
     with pytest.raises(ValueError, match="best round metrics_val"):
         cmd_run_closed_loop(cfg)
@@ -3312,7 +3312,7 @@ def test_cmd_run_closed_loop_raises_when_best_round_metrics_restore_is_missing(m
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: (
             (work_dir / "metrics_val.json").write_text(
                 json.dumps({"f1": 0.9}, ensure_ascii=False, indent=2),
@@ -3324,7 +3324,7 @@ def test_cmd_run_closed_loop_raises_when_best_round_metrics_restore_is_missing(m
         )[-1],
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_rl_fusion",
+        "forestseg.pipeline.cli.cmd_run_rl_fusion",
         lambda current_cfg, stage_override=None: (
             (work_dir / "fusion_selected.json").write_text(
                 json.dumps(_make_fusion_selected_payload(threshold=0.4), ensure_ascii=False, indent=2),
@@ -3356,14 +3356,14 @@ def test_cmd_run_closed_loop_raises_when_best_round_metrics_restore_is_missing(m
         )[-1],
     )
 
-    original_require_json = __import__("forestseg.cli", fromlist=["_require_json_copy"])._require_json_copy
+    original_require_json = __import__("forestseg.pipeline.cli", fromlist=["_require_json_copy"])._require_json_copy
 
     def fake_require_json(src, dst, label):
         if label == "best round metrics_val":
             raise ValueError(f"Missing {label}: {src}")
         return original_require_json(src, dst, label)
 
-    monkeypatch.setattr("forestseg.cli._require_json_copy", fake_require_json)
+    monkeypatch.setattr("forestseg.pipeline.cli._require_json_copy", fake_require_json)
 
     with pytest.raises(ValueError, match="best round metrics_val"):
         cmd_run_closed_loop(cfg)
@@ -3376,7 +3376,7 @@ def test_cmd_run_closed_loop_raises_when_round_artifact_snapshot_is_missing(monk
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: _make_train_result(train_metrics={"f1": 0.8}),
     )
 
@@ -3400,7 +3400,9 @@ def test_cmd_run_closed_loop_raises_when_round_artifact_snapshot_is_missing(monk
     ]
     call_index = {"value": 0}
 
-    original_copy_json = __import__("forestseg.cli", fromlist=["_snapshot_required_json"])._snapshot_required_json
+    original_copy_json = __import__(
+        "forestseg.pipeline.cli", fromlist=["_snapshot_required_json"]
+    )._snapshot_required_json
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[call_index["value"]]
@@ -3446,8 +3448,8 @@ def test_cmd_run_closed_loop_raises_when_round_artifact_snapshot_is_missing(monk
             raise ValueError(f"Missing {label}: {src}")
         return original_copy_json(src, dst, label)
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
-    monkeypatch.setattr("forestseg.cli._snapshot_required_json", fake_copy_json_if_exists)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli._snapshot_required_json", fake_copy_json_if_exists)
 
     with pytest.raises(ValueError, match="round 1 feature_feedback"):
         cmd_run_closed_loop(cfg)
@@ -3559,7 +3561,7 @@ def test_cmd_run_closed_loop_keeps_live_artifacts_unchanged_when_best_round_rest
             train_metrics=payload["train_metrics"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -3584,16 +3586,16 @@ def test_cmd_run_closed_loop_keeps_live_artifacts_unchanged_when_best_round_rest
             stage_used=payload["stage_used"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
-    original_require_json = __import__("forestseg.cli", fromlist=["_require_json_copy"])._require_json_copy
+    original_require_json = __import__("forestseg.pipeline.cli", fromlist=["_require_json_copy"])._require_json_copy
 
     def fake_require_json(src, dst, label):
         if label == "best round metrics_val":
             raise ValueError(f"Missing {label}: {src}")
         return original_require_json(src, dst, label)
 
-    monkeypatch.setattr("forestseg.cli._require_json_copy", fake_require_json)
+    monkeypatch.setattr("forestseg.pipeline.cli._require_json_copy", fake_require_json)
 
     with pytest.raises(ValueError, match="best round metrics_val"):
         cmd_run_closed_loop(cfg)
@@ -3717,7 +3719,7 @@ def test_cmd_run_closed_loop_restores_best_round_unc_dl(monkeypatch, tmp_path):
             train_metrics=payload["train_metrics"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -3742,7 +3744,7 @@ def test_cmd_run_closed_loop_restores_best_round_unc_dl(monkeypatch, tmp_path):
             stage_used=payload["stage_used"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
     summary = cmd_run_closed_loop(cfg)
 
@@ -3845,7 +3847,7 @@ def test_cmd_run_closed_loop_preserves_live_unc_dl_when_best_round_snapshot_is_l
             train_metrics=payload["train_metrics"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -3870,15 +3872,17 @@ def test_cmd_run_closed_loop_preserves_live_unc_dl_when_best_round_snapshot_is_l
             stage_used=payload["stage_used"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
-    original_restore = __import__("forestseg.cli", fromlist=["_restore_outputs_atomically"])._restore_outputs_atomically
+    original_restore = __import__(
+        "forestseg.pipeline.cli", fromlist=["_restore_outputs_atomically"]
+    )._restore_outputs_atomically
 
     def fake_restore(entries):
         legacy_entries = [entry for entry in entries if entry[2] != "unc_dl"]
         return original_restore(legacy_entries)
 
-    monkeypatch.setattr("forestseg.cli._restore_outputs_atomically", fake_restore)
+    monkeypatch.setattr("forestseg.pipeline.cli._restore_outputs_atomically", fake_restore)
 
     summary = cmd_run_closed_loop(cfg)
 
@@ -3988,7 +3992,7 @@ def test_cmd_run_closed_loop_reports_optional_restore_failure_for_unc_dl(monkeyp
             train_metrics=payload["train_metrics"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -4013,9 +4017,9 @@ def test_cmd_run_closed_loop_reports_optional_restore_failure_for_unc_dl(monkeyp
             stage_used=payload["stage_used"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
-    original_require_file = __import__("forestseg.cli", fromlist=["_require_file_copy"])._require_file_copy
+    original_require_file = __import__("forestseg.pipeline.cli", fromlist=["_require_file_copy"])._require_file_copy
 
     def fake_require_file(src, dst, label):
         normalized_src = str(src).replace("\\", "/")
@@ -4023,7 +4027,7 @@ def test_cmd_run_closed_loop_reports_optional_restore_failure_for_unc_dl(monkeyp
             raise ValueError(f"Missing artifact snapshot: {src}")
         return original_require_file(src, dst, label)
 
-    monkeypatch.setattr("forestseg.cli._require_file_copy", fake_require_file)
+    monkeypatch.setattr("forestseg.pipeline.cli._require_file_copy", fake_require_file)
 
     with pytest.raises(ValueError, match=r"unc_dl\.tif"):
         cmd_run_closed_loop(cfg)
@@ -4106,7 +4110,7 @@ def test_cmd_run_closed_loop_normalizes_rl_selection_metric(monkeypatch, tmp_pat
 
     _stub_closed_loop_prereqs(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.cmd_train_or_load_dl",
+        "forestseg.pipeline.cli.cmd_train_or_load_dl",
         lambda current_cfg, force_train=False: (
             (work_dir / "prob_dl.tif").write_bytes(b"f1-best-dl"),
             (work_dir / "unc_dl.tif").write_bytes(b"f1-best-unc"),
@@ -4118,7 +4122,7 @@ def test_cmd_run_closed_loop_normalizes_rl_selection_metric(monkeypatch, tmp_pat
         )[-1],
     )
     monkeypatch.setattr(
-        "forestseg.cli.cmd_run_rl_fusion",
+        "forestseg.pipeline.cli.cmd_run_rl_fusion",
         lambda current_cfg, stage_override=None: (
             (work_dir / "fusion_selected.json").write_text(
                 json.dumps(
@@ -4228,12 +4232,12 @@ def test_cmd_run_rl_fusion_rejects_missing_selected_metric_in_validation_reward(
     cfg["work_dir"] = str(work_dir)
 
     _write_basic_rl_fusion_inputs(work_dir)
-    monkeypatch.setattr("forestseg.cli.save_metrics", lambda *args, **kwargs: None)
-    monkeypatch.setattr("forestseg.cli.cmd_prepare_input", lambda current_cfg: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.save_metrics", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_prepare_input", lambda current_cfg: None)
     _stub_rl_fusion_validation_runtime(monkeypatch)
 
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: (
             FusionParams(**_make_fusion_params(threshold=0.6)),
             {"reward": 0.1},
@@ -4254,12 +4258,12 @@ def test_cmd_run_rl_fusion_uses_configured_selection_metric_for_score(
     cfg["work_dir"] = str(work_dir)
 
     _write_basic_rl_fusion_inputs(work_dir)
-    monkeypatch.setattr("forestseg.cli.save_metrics", lambda *args, **kwargs: None)
-    monkeypatch.setattr("forestseg.cli.cmd_prepare_input", lambda current_cfg: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.save_metrics", lambda *args, **kwargs: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_prepare_input", lambda current_cfg: None)
     _stub_rl_fusion_validation_runtime(monkeypatch)
 
     monkeypatch.setattr(
-        "forestseg.cli.choose_fusion_by_validation",
+        "forestseg.pipeline.cli.choose_fusion_by_validation",
         lambda **kwargs: (
             FusionParams(**_make_fusion_params(threshold=0.6)),
             {"reward": 0.1, "f1": 0.8},
@@ -4291,10 +4295,10 @@ def test_cmd_run_closed_loop_rejects_invalid_min_delta_without_preflight(monkeyp
     cfg["work_dir"] = str(work_dir)
 
     monkeypatch.setattr(
-        "forestseg.cli.cmd_preflight_check",
+        "forestseg.pipeline.cli.cmd_preflight_check",
         lambda current_cfg: {"status": "ok"},
     )
-    monkeypatch.setattr("forestseg.cli.cmd_prepare_input", lambda current_cfg: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_prepare_input", lambda current_cfg: None)
 
     with pytest.raises(ValueError, match="rl_loop.min_delta"):
         cmd_run_closed_loop(cfg)
@@ -4407,7 +4411,7 @@ def test_cmd_run_closed_loop_preserves_true_stopped_early_in_failure_summary_aft
             train_metrics=payload["train_metrics"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_train_or_load_dl", fake_train_or_load_dl)
 
     def fake_run_rl_fusion(current_cfg, stage_override=None):
         payload = round_payloads[current_round["value"]]
@@ -4432,16 +4436,16 @@ def test_cmd_run_closed_loop_preserves_true_stopped_early_in_failure_summary_aft
             stage_used=payload["stage_used"],
         )
 
-    monkeypatch.setattr("forestseg.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_run_rl_fusion", fake_run_rl_fusion)
 
-    original_require_json = __import__("forestseg.cli", fromlist=["_require_json_copy"])._require_json_copy
+    original_require_json = __import__("forestseg.pipeline.cli", fromlist=["_require_json_copy"])._require_json_copy
 
     def fake_require_json(src, dst, label):
         if label == "best round metrics_val":
             raise ValueError(f"Missing {label}: {src}")
         return original_require_json(src, dst, label)
 
-    monkeypatch.setattr("forestseg.cli._require_json_copy", fake_require_json)
+    monkeypatch.setattr("forestseg.pipeline.cli._require_json_copy", fake_require_json)
 
     with pytest.raises(ValueError, match="best round metrics_val"):
         cmd_run_closed_loop(cfg)
@@ -4518,10 +4522,10 @@ def test_cmd_run_closed_loop_rejects_invalid_selection_metric_without_preflight(
     cfg["work_dir"] = str(work_dir)
 
     monkeypatch.setattr(
-        "forestseg.cli.cmd_preflight_check",
+        "forestseg.pipeline.cli.cmd_preflight_check",
         lambda current_cfg: {"status": "ok"},
     )
-    monkeypatch.setattr("forestseg.cli.cmd_prepare_input", lambda current_cfg: None)
+    monkeypatch.setattr("forestseg.pipeline.cli.cmd_prepare_input", lambda current_cfg: None)
 
     with pytest.raises(ValueError, match="rl_loop.selection_metric"):
         cmd_run_closed_loop(cfg)
@@ -4645,7 +4649,7 @@ def test_cmd_prepare_label_points_rejects_blocking_label_validation(monkeypatch,
 
     _stub_label_validation_without_preflight(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points_from_two_files",
+        "forestseg.pipeline.cli.validate_label_points_from_two_files",
         lambda **kwargs: {
             "risk": {
                 "status": "block",
@@ -4656,11 +4660,11 @@ def test_cmd_prepare_label_points_rejects_blocking_label_validation(monkeypatch,
         },
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_label_points_from_two_files",
+        "forestseg.pipeline.cli.read_label_points_from_two_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("read_label_points_from_two_files should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.export_points_preview",
+        "forestseg.pipeline.cli.export_points_preview",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("export_points_preview should not run")),
     )
 
@@ -4676,7 +4680,7 @@ def test_cmd_prepare_label_points_writes_split_outputs(monkeypatch, tmp_path):
 
     _stub_label_validation_without_preflight(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points_from_two_files",
+        "forestseg.pipeline.cli.validate_label_points_from_two_files",
         lambda **kwargs: {
             "risk": {
                 "status": "warning",
@@ -4687,14 +4691,14 @@ def test_cmd_prepare_label_points_writes_split_outputs(monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_label_points_from_two_files",
+        "forestseg.pipeline.cli.read_label_points_from_two_files",
         lambda **kwargs: [
             type("P", (), {"x": 0.0, "y": 0.0, "label": 1, "grid_id": "0_0", "properties": {}})(),
             type("P", (), {"x": 2000.0, "y": 0.0, "label": 0, "grid_id": "2_0", "properties": {}})(),
         ],
     )
     monkeypatch.setattr(
-        "forestseg.cli.export_points_preview",
+        "forestseg.pipeline.cli.export_points_preview",
         lambda path, points, crs, layer="labels": path,
     )
 
@@ -4731,7 +4735,7 @@ def test_cmd_check_label_points_writes_top_level_contract(monkeypatch, tmp_path)
 
     _stub_label_validation_without_preflight(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points_from_two_files",
+        "forestseg.pipeline.cli.validate_label_points_from_two_files",
         lambda **kwargs: {
             "path": str(tmp_path / "labels.gpkg"),
             "risk": {
@@ -4764,7 +4768,7 @@ def test_cmd_check_label_points_writes_blocking_top_level_contract(monkeypatch, 
 
     _stub_label_validation_without_preflight(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points_from_two_files",
+        "forestseg.pipeline.cli.validate_label_points_from_two_files",
         lambda **kwargs: {
             "path": str(tmp_path / "labels.gpkg"),
             "risk": {
@@ -4820,26 +4824,26 @@ def test_cmd_prepare_label_points_uses_legacy_labels_path_fallback(monkeypatch, 
 
     _stub_label_validation_without_preflight(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points",
+        "forestseg.pipeline.cli.validate_label_points",
         lambda **kwargs: {"risk": {"status": "ok", "can_run": True, "warnings": [], "blocking": []}},
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_label_points",
+        "forestseg.pipeline.cli.read_label_points",
         lambda **kwargs: [
             type("P", (), {"x": 0.0, "y": 0.0, "label": 1, "grid_id": "0_0", "properties": {}})(),
             type("P", (), {"x": 2000.0, "y": 0.0, "label": 0, "grid_id": "2_0", "properties": {}})(),
         ],
     )
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points_from_two_files",
+        "forestseg.pipeline.cli.validate_label_points_from_two_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("dual-file validator should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.read_label_points_from_two_files",
+        "forestseg.pipeline.cli.read_label_points_from_two_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("dual-file reader should not run")),
     )
     monkeypatch.setattr(
-        "forestseg.cli.export_points_preview",
+        "forestseg.pipeline.cli.export_points_preview",
         lambda path, points, crs, layer="labels": path,
     )
 
@@ -4856,14 +4860,14 @@ def test_cmd_check_label_points_uses_legacy_labels_path_fallback(monkeypatch, tm
 
     _stub_label_validation_without_preflight(monkeypatch)
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points",
+        "forestseg.pipeline.cli.validate_label_points",
         lambda **kwargs: {
             "path": str(tmp_path / "labels_legacy.gpkg"),
             "risk": {"status": "ok", "can_run": True, "warnings": [], "blocking": []},
         },
     )
     monkeypatch.setattr(
-        "forestseg.cli.validate_label_points_from_two_files",
+        "forestseg.pipeline.cli.validate_label_points_from_two_files",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("dual-file validator should not run")),
     )
 
