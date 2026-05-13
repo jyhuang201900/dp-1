@@ -86,9 +86,20 @@ def _weights(lambda_spec: float, lambda_tex: float) -> tuple[float, float, float
     return ld, ls, lt
 
 
-def fuse_probabilities(prob_dl: np.ndarray, prob_spec: np.ndarray, prob_tex: np.ndarray, p: FusionParams) -> np.ndarray:
+def fuse_probabilities(
+    prob_dl: np.ndarray,
+    prob_spec: np.ndarray,
+    prob_tex: np.ndarray,
+    p: FusionParams,
+    *,
+    precomputed_valid: np.ndarray | None = None,
+) -> np.ndarray:
     ld, ls, lt = _weights(p.lambda_spec, p.lambda_tex)
-    valid = normalized_valid_mask(prob_dl) & normalized_valid_mask(prob_spec) & normalized_valid_mask(prob_tex)
+    valid = (
+        precomputed_valid
+        if precomputed_valid is not None
+        else normalized_valid_mask(prob_dl) & normalized_valid_mask(prob_spec) & normalized_valid_mask(prob_tex)
+    )
     out = np.zeros_like(prob_dl, dtype=np.float32)
     if not np.any(valid):
         return out
@@ -114,14 +125,19 @@ def _objective(
     threshold: float,
     shadow_score: np.ndarray,
     shadow_penalty: float,
+    *,
+    precomputed_input_valid: np.ndarray | None = None,
 ) -> float:
-    valid = (
-        normalized_valid_mask(fused)
-        & normalized_valid_mask(prob_dl)
-        & normalized_valid_mask(prob_spec)
-        & normalized_valid_mask(prob_tex)
-        & normalized_valid_mask(shadow_score)
-    )
+    if precomputed_input_valid is not None:
+        valid = normalized_valid_mask(fused) & precomputed_input_valid
+    else:
+        valid = (
+            normalized_valid_mask(fused)
+            & normalized_valid_mask(prob_dl)
+            & normalized_valid_mask(prob_spec)
+            & normalized_valid_mask(prob_tex)
+            & normalized_valid_mask(shadow_score)
+        )
     if not np.any(valid):
         return -1e18
 
@@ -159,6 +175,13 @@ def run_stage1_grid(
     best_p: FusionParams | None = None
     best_fused: np.ndarray | None = None
 
+    input_valid = (
+        normalized_valid_mask(prob_dl)
+        & normalized_valid_mask(prob_spec)
+        & normalized_valid_mask(prob_tex)
+        & normalized_valid_mask(shadow_score)
+    )
+
     for ls, lt, th, area, mk, sp in product(
         grid["lambda_spec"],
         grid["lambda_tex"],
@@ -175,8 +198,17 @@ def run_stage1_grid(
             morph_kernel=int(mk),
             shadow_penalty=float(sp),
         )
-        fused = fuse_probabilities(prob_dl, prob_spec, prob_tex, p)
-        score = _objective(fused, prob_dl, prob_spec, prob_tex, p.threshold, shadow_score, p.shadow_penalty)
+        fused = fuse_probabilities(prob_dl, prob_spec, prob_tex, p, precomputed_valid=input_valid)
+        score = _objective(
+            fused,
+            prob_dl,
+            prob_spec,
+            prob_tex,
+            p.threshold,
+            shadow_score,
+            p.shadow_penalty,
+            precomputed_input_valid=input_valid,
+        )
         if score > best_score:
             best_score = score
             best_p = p
