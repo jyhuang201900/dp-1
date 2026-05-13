@@ -125,9 +125,6 @@ def _read_label_dataset(options: LabelReadOptions) -> LabelReadResult:
     if selected_layer is None:
         raise ValueError(f"标签文件没有可用图层：{options.path}。")
 
-    normalized_positive = str(options.positive_value).strip().lower()
-    normalized_negative = str(options.negative_value).strip().lower()
-
     expected_labels = {
         normalized_positive: 1,
         normalized_negative: 0,

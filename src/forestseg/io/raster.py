@@ -151,9 +151,8 @@ def gaussian_weight(h: int, w: int, sigma_ratio: float = 0.125) -> np.ndarray:
 def normalize_clip(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
     if hi <= lo:
         return np.zeros_like(arr, dtype=np.float32)
-    out = np.clip(arr, lo, hi)
-    out = (out - lo) / (hi - lo)
-    return out.astype(np.float32)
+    scale = np.float32(1.0 / (hi - lo))
+    return np.clip((arr - lo) * scale, 0.0, 1.0).astype(np.float32)
 
 
 def compute_percentiles_uint8(path: str, pmin: float = 2.0, pmax: float = 98.0) -> tuple[float, float]:

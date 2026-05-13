@@ -152,6 +152,7 @@ def choose_fusion_by_validation(
     best_reward = -1e18
     best_candidate: FusionParams | None = None
     best_metrics: dict[str, Any] | None = None
+    precomputed_valid: np.ndarray = np.ones(len(dl_vals), dtype=bool)
     for ls, lt, th in product(
         grid_params["lambda_spec"],
         grid_params["lambda_tex"],
@@ -160,7 +161,7 @@ def choose_fusion_by_validation(
         candidate = FusionParams.from_mapping(
             {"lambda_spec": ls, "lambda_tex": lt, "threshold": th, **resolved_postprocess},
         )
-        fused_prob = fuse_probabilities(dl_vals, spec_vals, tex_vals, candidate)
+        fused_prob = fuse_probabilities(dl_vals, spec_vals, tex_vals, candidate, precomputed_valid=precomputed_valid)
         metrics = binary_metrics(y_true, fused_prob, threshold=float(candidate.threshold))
         reward = float(metrics["accuracy"]) + float(metrics["f1"]) + float(metrics["iou"])
         if reward > best_reward:

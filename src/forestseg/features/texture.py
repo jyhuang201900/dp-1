@@ -21,8 +21,8 @@ def _norm01(arr: np.ndarray, valid: np.ndarray) -> np.ndarray:
     lo, hi = np.percentile(vals, [2, 98])
     if hi <= lo:
         return out
-    clipped = np.clip(arr, lo, hi)
-    out[valid] = ((clipped[valid] - lo) / (hi - lo)).astype(np.float32)
+    scale = 1.0 / (hi - lo)
+    out[valid] = np.clip((vals - lo) * scale, 0.0, 1.0).astype(np.float32)
     return out
 
 
